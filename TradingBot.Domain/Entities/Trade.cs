@@ -4,7 +4,7 @@ namespace TradingBot.Domain.Entities
 {
     public class Trade : BaseEntity
     {
-        public string Symbol { get; set; }
+        public string? Symbol { get; set; }
 
         public decimal EntryPrice { get; set; }
         public decimal? ExitPrice { get; set; }

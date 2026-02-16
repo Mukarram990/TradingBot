@@ -5,14 +5,9 @@ namespace TradingBot.API.Controllers
 {
     [ApiController]
     [Route("api/market")]
-    public class MarketController : ControllerBase
+    public class MarketController(IMarketDataService market) : ControllerBase
     {
-        private readonly IMarketDataService _market;
-
-        public MarketController(IMarketDataService market)
-        {
-            _market = market;
-        }
+        private readonly IMarketDataService _market = market;
 
         [HttpGet("price/{symbol}")]
         public async Task<IActionResult> GetPrice(string symbol)
@@ -21,5 +16,4 @@ namespace TradingBot.API.Controllers
             return Ok(price);
         }
     }
-
 }

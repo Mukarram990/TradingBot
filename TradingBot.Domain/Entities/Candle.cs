@@ -2,8 +2,8 @@
 {
     public class Candle : BaseEntity
     {
-        public string Symbol { get; set; }
-        public string Interval { get; set; }
+        public string? Symbol { get; set; }
+        public string? Interval { get; set; }
 
         public DateTime OpenTime { get; set; }
         public DateTime CloseTime { get; set; }

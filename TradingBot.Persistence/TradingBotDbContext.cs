@@ -5,21 +5,21 @@ namespace TradingBot.Persistence
 {
     public class TradingBotDbContext(DbContextOptions<TradingBotDbContext> options) : DbContext(options)
     {
-        public DbSet<Trade> Trades { get; set; }
-        public DbSet<Order> Orders { get; set; }
-        public DbSet<Position> Positions { get; set; }
-        public DbSet<TradingPair> TradingPairs { get; set; }
-        public DbSet<Candle> Candles { get; set; }
-        public DbSet<IndicatorSnapshot> IndicatorSnapshots { get; set; }
-        public DbSet<TradeSignal> TradeSignals { get; set; }
-        public DbSet<PortfolioSnapshot> PortfolioSnapshots { get; set; }
-        public DbSet<DailyPerformance> DailyPerformances { get; set; }
-        public DbSet<SystemLog> SystemLogs { get; set; }
-        public DbSet<AIResponse> AIResponses { get; set; }
-        public DbSet<RiskProfile> RiskProfiles { get; set; }
-        public DbSet<Strategy> Strategies { get; set; }
-        public DbSet<MarketRegime> MarketRegimes { get; set; }
-        public DbSet<UserAccount> UserAccounts { get; set; }
+        public DbSet<Trade>? Trades { get; set; }
+        public DbSet<Order>? Orders { get; set; }
+        public DbSet<Position>? Positions { get; set; }
+        public DbSet<TradingPair>? TradingPairs { get; set; }
+        public DbSet<Candle>? Candles { get; set; }
+        public DbSet<IndicatorSnapshot>? IndicatorSnapshots { get; set; }
+        public DbSet<TradeSignal>? TradeSignals { get; set; }
+        public DbSet<PortfolioSnapshot>? PortfolioSnapshots { get; set; }
+        public DbSet<DailyPerformance>? DailyPerformances { get; set; }
+        public DbSet<SystemLog>? SystemLogs { get; set; }
+        public DbSet<AIResponse>? AIResponses { get; set; }
+        public DbSet<RiskProfile>? RiskProfiles { get; set; }
+        public DbSet<Strategy>? Strategies { get; set; }
+        public DbSet<MarketRegime>? MarketRegimes { get; set; }
+        public DbSet<UserAccount>? UserAccounts { get; set; } 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

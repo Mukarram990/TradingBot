@@ -6,14 +6,9 @@ namespace TradingBot.API.Controllers
 {
     [ApiController]
     [Route("api/trade")]
-    public class TradeController : ControllerBase
+    public class TradeController(ITradeExecutionService trade) : ControllerBase
     {
-        private readonly ITradeExecutionService _trade;
-
-        public TradeController(ITradeExecutionService trade)
-        {
-            _trade = trade;
-        }
+        private readonly ITradeExecutionService _trade = trade;
 
         [HttpPost("market")]
         public async Task<IActionResult> PlaceMarketOrder([FromBody] TradeSignal signal)
@@ -22,5 +17,4 @@ namespace TradingBot.API.Controllers
             return Ok(order);
         }
     }
-
 }

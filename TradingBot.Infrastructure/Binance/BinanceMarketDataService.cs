@@ -25,7 +25,7 @@ namespace TradingBot.Infrastructure.Binance
             var json = await response.Content.ReadAsStringAsync();
             var result = JsonSerializer.Deserialize<JsonElement>(json);
 
-            return result.GetProperty("price").GetDecimal();
+            return Convert.ToDecimal(result.GetProperty("price").GetString());
         }
 
         public async Task<IEnumerable<Candle>> GetRecentCandlesAsync(string symbol, int limit)

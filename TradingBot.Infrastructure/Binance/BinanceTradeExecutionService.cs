@@ -1,9 +1,11 @@
-﻿using Microsoft.Extensions.Options;
+﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using System.Text;
 using System.Text.Json;
 using TradingBot.Domain.Entities;
-using TradingBot.Domain.Interfaces;
 using TradingBot.Domain.Enums;
+using TradingBot.Domain.Interfaces;
+using TradingBot.Persistence;
 
 namespace TradingBot.Infrastructure.Binance
 {
@@ -12,15 +14,18 @@ namespace TradingBot.Infrastructure.Binance
         private readonly HttpClient _httpClient;
         private readonly BinanceOptions _options;
         private readonly BinanceSignatureService _signatureService;
+        private readonly TradingBotDbContext _dbContext;
 
         public BinanceTradeExecutionService(
             HttpClient httpClient,
-            IOptions<BinanceOptions> options)
+            IOptions<BinanceOptions> options,
+            TradingBotDbContext dbContext)
         {
             _httpClient = httpClient;
             _options = options.Value;
-            _httpClient.BaseAddress = new Uri(_options.BaseUrl);
+            _dbContext = dbContext;
 
+            _httpClient.BaseAddress = new Uri(_options.BaseUrl);
             _signatureService = new BinanceSignatureService(_options.ApiSecret);
         }
 
@@ -46,19 +51,44 @@ namespace TradingBot.Infrastructure.Binance
             request.Headers.Add("X-MBX-APIKEY", _options.ApiKey);
 
             var response = await _httpClient.SendAsync(request);
-            response.EnsureSuccessStatusCode();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                throw new Exception($"Binance order failed: {error}");
+            }
 
             var json = await response.Content.ReadAsStringAsync();
             var result = JsonSerializer.Deserialize<JsonElement>(json);
 
-            return new Order
+            decimal? executedPrice = null;
+
+            if (result.TryGetProperty("fills", out var fills) && fills.GetArrayLength() > 0)
+            {
+                executedPrice = decimal.Parse(
+                    fills[0].GetProperty("price").GetString()!,
+                    System.Globalization.CultureInfo.InvariantCulture);
+            }
+
+
+            var order = new Order
             {
                 ExternalOrderId = result.GetProperty("orderId").GetInt64().ToString(),
-                Symbol = signal.Symbol,
+                Symbol = signal.Symbol ?? "",
                 Quantity = signal.Quantity,
-                Status = TradeStatus.Open,
-                CreatedAt = DateTime.UtcNow
+                ExecutedPrice = executedPrice,
+                Status = TradeStatus.Open
             };
+
+            if (_dbContext.Orders is null)
+            {
+                throw new InvalidOperationException("Orders DbSet is not initialized.");
+            }
+
+            _dbContext.Orders.Add(order);
+            await _dbContext.SaveChangesAsync();
+
+            return order;
         }
 
         public async Task<bool> CancelOrderAsync(string orderId)
@@ -72,6 +102,7 @@ namespace TradingBot.Infrastructure.Binance
             request.Headers.Add("X-MBX-APIKEY", _options.ApiKey);
 
             var response = await _httpClient.SendAsync(request);
+
             return response.IsSuccessStatusCode;
         }
     }

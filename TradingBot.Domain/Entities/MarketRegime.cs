@@ -4,7 +4,7 @@ namespace TradingBot.Domain.Entities
 {
     public class MarketRegime : BaseEntity
     {
-        public string Symbol { get; set; }
+        public string? Symbol { get; set; }
 
         public MarketTrend Trend { get; set; }
 

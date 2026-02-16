@@ -2,7 +2,7 @@
 {
     public class UserAccount : BaseEntity
     {
-        public string Username { get; set; }
+        public string? Username { get; set; }
 
         public decimal TotalBalance { get; set; }
 
