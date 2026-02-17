@@ -2,6 +2,7 @@
 using System.Text.Json;
 using TradingBot.Domain.Entities;
 using TradingBot.Domain.Interfaces;
+using TradingBot.Infrastructure.Binance.Models;
 
 namespace TradingBot.Infrastructure.Binance
 {
@@ -28,33 +29,57 @@ namespace TradingBot.Infrastructure.Binance
             return Convert.ToDecimal(result.GetProperty("price").GetString());
         }
 
-        public async Task<IEnumerable<Candle>> GetRecentCandlesAsync(string symbol, int limit)
+        public async Task<IEnumerable<Candle>> GetRecentCandlesAsync(string symbol, int limit, string interval = "1m")
         {
-            var response = await _httpClient.GetAsync(
-                $"/api/v3/klines?symbol={symbol}&interval=1m&limit={limit}");
+            if (string.IsNullOrWhiteSpace(symbol))
+                throw new ArgumentException("Symbol is required.");
 
-            response.EnsureSuccessStatusCode();
+            if (limit <= 0 || limit > 1000)
+                throw new ArgumentException("Limit must be between 1 and 1000.");
+
+            var response = await _httpClient.GetAsync(
+                $"/api/v3/klines?symbol={symbol.ToUpper()}&interval={interval}&limit={limit}");
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                throw new Exception($"Binance kline request failed: {error}");
+            }
 
             var json = await response.Content.ReadAsStringAsync();
-            var data = JsonSerializer.Deserialize<List<List<object>>>(json);
+
+            using var document = JsonDocument.Parse(json);
 
             var candles = new List<Candle>();
 
-            foreach (var item in data!)
+            foreach (var element in document.RootElement.EnumerateArray())
             {
                 candles.Add(new Candle
                 {
-                    Symbol = symbol,
-                    OpenTime = DateTimeOffset.FromUnixTimeMilliseconds(Convert.ToInt64(item[0])).UtcDateTime,
-                    Open = Convert.ToDecimal(item[1]),
-                    High = Convert.ToDecimal(item[2]),
-                    Low = Convert.ToDecimal(item[3]),
-                    Close = Convert.ToDecimal(item[4]),
-                    Volume = Convert.ToDecimal(item[5])
+                    Symbol = symbol.ToUpper(),
+                    OpenTime = DateTimeOffset
+                        .FromUnixTimeMilliseconds(element[0].GetInt64())
+                        .UtcDateTime,
+
+                    Open = decimal.Parse(element[1].GetString()!,
+                        System.Globalization.CultureInfo.InvariantCulture),
+
+                    High = decimal.Parse(element[2].GetString()!,
+                        System.Globalization.CultureInfo.InvariantCulture),
+
+                    Low = decimal.Parse(element[3].GetString()!,
+                        System.Globalization.CultureInfo.InvariantCulture),
+
+                    Close = decimal.Parse(element[4].GetString()!,
+                        System.Globalization.CultureInfo.InvariantCulture),
+
+                    Volume = decimal.Parse(element[5].GetString()!,
+                        System.Globalization.CultureInfo.InvariantCulture)
                 });
             }
 
             return candles;
         }
+
     }
 }

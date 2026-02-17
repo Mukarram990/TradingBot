@@ -29,6 +29,12 @@ namespace TradingBot.Persistence
             modelBuilder.Entity<Trade>()
                 .HasIndex(t => t.Symbol);
 
+            modelBuilder.Entity<Order>()
+                .HasOne(o => o.Trade)
+                .WithMany(t => t.Orders)
+                .HasForeignKey(o => o.TradeId)
+                .OnDelete(DeleteBehavior.Cascade);
+
             modelBuilder.Entity<TradingPair>()
                 .HasIndex(p => p.Symbol)
                 .IsUnique();

@@ -6,7 +6,7 @@ namespace TradingBot.Domain.Interfaces
 {
     public interface IMarketDataService
     {
-        Task<IEnumerable<Candle>> GetRecentCandlesAsync(string symbol, int limit);
+        Task<IEnumerable<Candle>> GetRecentCandlesAsync(string symbol, int limit, string interval);
         Task<decimal> GetCurrentPriceAsync(string symbol);
     }
 }

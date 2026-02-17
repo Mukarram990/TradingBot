@@ -5,7 +5,10 @@ namespace TradingBot.Domain.Interfaces
 {
     public interface ITradeExecutionService
     {
-        Task<Order> ExecuteOrderAsync(TradeSignal signal);
+        Task<Order> OpenTradeAsync(TradeSignal signal);
+
+        Task<Order> CloseTradeAsync(int tradeId);
+
         Task<bool> CancelOrderAsync(string orderId);
     }
 }

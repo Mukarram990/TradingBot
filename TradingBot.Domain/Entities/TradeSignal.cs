@@ -13,6 +13,11 @@ namespace TradingBot.Domain.Entities
 
         public decimal Quantity { get; set; }
 
-        public decimal? Confidence { get; set; }
+        public decimal EntryPrice { get; set; }
+        public decimal StopLoss { get; set; }
+        public decimal TakeProfit { get; set; }
+        public decimal AccountBalance { get; set; }
+        public int AIConfidence { get; set; }
+
     }
 }

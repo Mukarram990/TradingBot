@@ -6,14 +6,28 @@ namespace TradingBot.API.Controllers
 {
     [ApiController]
     [Route("api/trade")]
-    public class TradeController(ITradeExecutionService trade) : ControllerBase
+    public class TradeController : ControllerBase
     {
-        private readonly ITradeExecutionService _trade = trade;
+        private readonly ITradeExecutionService _trade;
 
-        [HttpPost("market")]
-        public async Task<IActionResult> PlaceMarketOrder([FromBody] TradeSignal signal)
+        public TradeController(ITradeExecutionService trade)
         {
-            var order = await _trade.ExecuteOrderAsync(signal);
+            _trade = trade;
+        }
+
+        // 1️⃣ Open new trade
+        [HttpPost("open")]
+        public async Task<IActionResult> OpenTrade([FromBody] TradeSignal signal)
+        {
+            var order = await _trade.OpenTradeAsync(signal);
+            return Ok(order);
+        }
+
+        // 2️⃣ Close existing trade
+        [HttpPost("close/{tradeId}")]
+        public async Task<IActionResult> CloseTrade(int tradeId)
+        {
+            var order = await _trade.CloseTradeAsync(tradeId);
             return Ok(order);
         }
     }

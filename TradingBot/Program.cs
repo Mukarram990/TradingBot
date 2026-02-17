@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
+using TradingBot.Application;
 using TradingBot.Domain.Interfaces;
 using TradingBot.Infrastructure.Binance;
+using TradingBot.Infrastructure.Binance.Models;
 using TradingBot.Persistence;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -22,6 +24,9 @@ builder.Services.Configure<BinanceOptions>(
 builder.Services.AddHttpClient<ITradeExecutionService, BinanceTradeExecutionService>();
 builder.Services.AddHttpClient<IMarketDataService, BinanceMarketDataService>();
 builder.Services.AddHttpClient<BinanceAccountService>();
+builder.Services.AddScoped<PortfolioManager>();
+builder.Services.AddScoped<RiskManagementService>();
+
 
 #endregion
 

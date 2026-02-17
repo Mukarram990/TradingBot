@@ -1,35 +1,16 @@
-﻿using TradingBot.Domain.Enums;
+﻿using TradingBot.Domain.Entities;
+using TradingBot.Domain.Enums;
 
-namespace TradingBot.Domain.Entities
+public class Order : BaseEntity
 {
-    /// <summary>
-    /// Represents an order placed on Binance and tracked internally.
-    /// </summary>
-    public class Order : BaseEntity
-    {
-        /// <summary>
-        /// Binance exchange order ID
-        /// </summary>
-        public string ExternalOrderId { get; set; } = string.Empty;
+    public string ExternalOrderId { get; set; } = string.Empty;
+    public string Symbol { get; set; } = string.Empty;
 
-        /// <summary>
-        /// Trading pair (e.g. BTCUSDT)
-        /// </summary>
-        public string Symbol { get; set; } = string.Empty;
+    public decimal Quantity { get; set; }
+    public decimal? ExecutedPrice { get; set; }
 
-        /// <summary>
-        /// Requested quantity
-        /// </summary>
-        public decimal Quantity { get; set; }
+    public TradeStatus Status { get; set; }
 
-        /// <summary>
-        /// Executed price (if filled)
-        /// </summary>
-        public decimal? ExecutedPrice { get; set; }
-
-        /// <summary>
-        /// Current trade status
-        /// </summary>
-        public TradeStatus Status { get; set; }
-    }
+    public int TradeId { get; set; }
+    public Trade Trade { get; set; } = null!;
 }
