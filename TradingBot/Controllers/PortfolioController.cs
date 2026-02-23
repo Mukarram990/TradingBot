@@ -1,5 +1,5 @@
 ﻿using Microsoft.AspNetCore.Mvc;
-using TradingBot.Application;
+using TradingBot.Services;
 
 namespace TradingBot.API.Controllers
 {
