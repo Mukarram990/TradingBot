@@ -1,5 +1,8 @@
 ﻿using TradingBot.Persistence;
 using TradingBot.Domain.Enums;
+using TradingBot.Domain.Interfaces;
+using TradingBot.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
 
 namespace TradingBot.Application
 {
@@ -7,74 +10,112 @@ namespace TradingBot.Application
     {
         private readonly TradingBotDbContext _db;
 
-        private const decimal MaxRiskPerTradePercent = 0.02m;      // 2%
-        private const decimal DailyLossLimitPercent = 0.05m;       // 5%
-        private const int MaxTradesPerDay = 5;
-
         public RiskManagementService(TradingBotDbContext db)
         {
             _db = db;
         }
 
-        // 1️⃣ Check max trades per day
+        // ─── Helper: Load RiskProfile from DB ───────────────────────────────
+        private async Task<RiskProfile> GetProfileAsync()
+        {
+            var profile = await _db.RiskProfiles.FirstOrDefaultAsync();
+            return profile ?? throw new InvalidOperationException(
+                "No RiskProfile found in the database. Run the application once to seed defaults.");
+        }
+
+        // ─── 1. Max trades per day ──────────────────────────────────────────
         public bool CanTradeToday()
         {
             var today = DateTime.UtcNow.Date;
 
+            // Load synchronously (EF in-process) — acceptable for guard checks
+            var profile = _db.RiskProfiles.FirstOrDefault()
+                ?? throw new InvalidOperationException("RiskProfile not configured.");
+
             var tradeCount = _db.Trades
                 .Count(t => t.EntryTime.Date == today);
 
-            return tradeCount < MaxTradesPerDay;
+            return tradeCount < profile.MaxTradesPerDay;
         }
 
+        // ─── 2. Get daily starting balance (from today's first snapshot) ────
+        public async Task<decimal> GetDailyStartingBalanceAsync()
+        {
+            var today = DateTime.UtcNow.Date;
 
-        // 2️⃣ Check daily loss limit
+            var snapshot = await _db.PortfolioSnapshots
+                .Where(p => p.CreatedAt.Date == today)
+                .OrderBy(p => p.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            // Return the first snapshot of the day, or 0 to signal "no baseline yet"
+            return snapshot?.TotalBalanceUSDT ?? 0m;
+        }
+
+        // ─── 3. Daily loss limit check ───────────────────────────────────────
         public bool IsDailyLossExceeded(decimal currentBalance, decimal startingBalanceToday)
         {
-            var lossPercent = (startingBalanceToday - currentBalance) / startingBalanceToday;
+            // If no baseline snapshot exists yet, allow trading
+            if (startingBalanceToday <= 0)
+                return false;
 
-            return lossPercent >= DailyLossLimitPercent;
+            var profile = _db.RiskProfiles.FirstOrDefault();
+            if (profile == null) return false;
+
+            var lossPercent = (startingBalanceToday - currentBalance) / startingBalanceToday;
+            return lossPercent >= profile.MaxDailyLossPercent;   // e.g. 0.05 = 5%
         }
 
-        // 3️⃣ Validate stop loss
+        // ─── 4. Stop loss validation ─────────────────────────────────────────
         public bool IsStopLossValid(decimal entryPrice, decimal stopLoss)
         {
-            return stopLoss < entryPrice; // spot long only
+            // Spot long only: SL must be below entry
+            return stopLoss > 0 && stopLoss < entryPrice;
         }
 
-        // 4️⃣ Calculate position size (core logic)
+        // ─── 5. Position sizing ──────────────────────────────────────────────
         public decimal CalculatePositionSize(
             decimal accountBalance,
             decimal entryPrice,
             decimal stopLoss)
         {
             if (!IsStopLossValid(entryPrice, stopLoss))
-                throw new Exception("Invalid Stop Loss.");
+                throw new ArgumentException("Invalid Stop Loss: must be > 0 and < entry price.");
 
-            var riskAmount = accountBalance * MaxRiskPerTradePercent;
+            var profile = _db.RiskProfiles.FirstOrDefault()
+                ?? throw new InvalidOperationException("RiskProfile not configured.");
 
+            // Risk amount = balance * MaxRiskPerTradePercent (e.g. 2%)
+            var riskAmount = accountBalance * profile.MaxRiskPerTradePercent;
+
+            // Units to buy = riskAmount / (entryPrice - stopLoss)
             var riskPerUnit = entryPrice - stopLoss;
 
             if (riskPerUnit <= 0)
-                throw new Exception("Invalid risk per unit.");
+                throw new ArgumentException("Risk per unit must be greater than zero.");
 
             var quantity = riskAmount / riskPerUnit;
 
+            // Round to 6 decimal places (standard for crypto)
             return Math.Round(quantity, 6);
         }
 
-        // 5️⃣ Simple circuit breaker
+        // ─── 6. Circuit breaker ──────────────────────────────────────────────
         public bool IsCircuitBreakerTriggered()
         {
+            var profile = _db.RiskProfiles.FirstOrDefault();
+            if (profile == null) return false;
+
             var today = DateTime.UtcNow.Date;
 
-            var losingTrades = _db.Trades
-                .Where(o => o.CreatedAt.Date == today &&
-                            o.Status == TradeStatus.Closed &&
-                            o.PnL < 0)
+            // Count consecutive losing closed trades today
+            var losingTradesToday = _db.Trades
+                .Where(t => t.Status == TradeStatus.Closed
+                         && t.EntryTime.Date == today
+                         && t.PnL < 0)
                 .Count();
 
-            return losingTrades >= 3;
+            return losingTradesToday >= profile.CircuitBreakerLossCount;   // e.g. 3
         }
     }
 }

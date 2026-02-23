@@ -536,22 +536,37 @@ namespace TradingBot.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("ID"));
 
-                    b.Property<int>("Action")
+                    b.Property<int>("AIConfidence")
                         .HasColumnType("int");
 
-                    b.Property<decimal?>("Confidence")
+                    b.Property<decimal>("AccountBalance")
                         .HasPrecision(18, 8)
                         .HasColumnType("decimal(18,8)");
 
+                    b.Property<int>("Action")
+                        .HasColumnType("int");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
+
+                    b.Property<decimal>("EntryPrice")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("decimal(18,8)");
 
                     b.Property<decimal>("Quantity")
                         .HasPrecision(18, 8)
                         .HasColumnType("decimal(18,8)");
 
+                    b.Property<decimal>("StopLoss")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("decimal(18,8)");
+
                     b.Property<string>("Symbol")
                         .HasColumnType("nvarchar(450)");
+
+                    b.Property<decimal>("TakeProfit")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("decimal(18,8)");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2");
