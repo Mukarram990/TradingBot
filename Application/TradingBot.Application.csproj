@@ -1,14 +1,19 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+	</PropertyGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\TradingBot.Domain\TradingBot.Domain.csproj" />
-    <ProjectReference Include="..\TradingBot.Persistence\TradingBot.Persistence.csproj" />
-  </ItemGroup>
+	<ItemGroup>
+		<!-- Logging abstractions for ILogger<T> injection -->
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.3" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\TradingBot.Domain\TradingBot.Domain.csproj" />
+		<ProjectReference Include="..\TradingBot.Persistence\TradingBot.Persistence.csproj" />
+	</ItemGroup>
 
 </Project>

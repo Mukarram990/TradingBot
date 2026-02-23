@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
+using TradingBot.Application;
 using TradingBot.Domain.Interfaces;
 using TradingBot.Infrastructure.Binance;
 using TradingBot.Infrastructure.Binance.Models;
@@ -27,13 +28,17 @@ builder.Services.Configure<BinanceOptions>(
 builder.Services.AddHttpClient<ITradeExecutionService, BinanceTradeExecutionService>();
 builder.Services.AddHttpClient<IMarketDataService, BinanceMarketDataService>();
 builder.Services.AddHttpClient<BinanceAccountService>();
+
 builder.Services.AddScoped<PortfolioManager>();
 builder.Services.AddScoped<RiskManagementService>();
 builder.Services.AddScoped<IRiskManagementService>(sp => sp.GetRequiredService<RiskManagementService>());
 
-// ✅ NEW: Register Trade Monitoring Service (PRIORITY 3 FIX)
+// Phase 1: Trade monitoring background worker
 builder.Services.AddScoped<ITradeMonitoringService, TradeMonitoringService>();
 builder.Services.AddHostedService<TradeMonitoringWorker>();
+
+// Phase 2 Step 1: Indicator calculation service
+builder.Services.AddScoped<IIndicatorService, IndicatorCalculationService>();
 
 #endregion
 
@@ -46,7 +51,7 @@ builder.Services.AddSwaggerGen(c =>
     {
         Title = "TradingBot API",
         Version = "v1",
-        Description = "API for TradingBot services"
+        Description = "Automated crypto trading bot — Binance integration"
     });
 });
 
@@ -54,60 +59,46 @@ var app = builder.Build();
 
 #region Initialize Data
 
-// ✅ NEW: Initialize daily baseline snapshot (PRIORITY 2 FIX)
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<TradingBotDbContext>();
     var portfolioManager = scope.ServiceProvider.GetRequiredService<PortfolioManager>();
 
-    // Apply migrations
+    // Apply any pending migrations automatically
     await db.Database.MigrateAsync();
 
-    // Seed risk profile
+    // Seed default risk profile if none exists
     await RiskProfileSeeder.SeedDefaultRiskProfileAsync(db);
 
-    // Create baseline snapshot if not exists for today
+    // Create today's portfolio baseline snapshot if not already done
     var today = DateTime.UtcNow.Date;
-    var existsToday = await db.PortfolioSnapshots
+    bool hasToday = await db.PortfolioSnapshots!
         .AnyAsync(p => p.CreatedAt.Date == today);
 
-    if (!existsToday)
+    if (!hasToday)
     {
         try
         {
             await portfolioManager.CreateSnapshotAsync();
+            app.Logger.LogInformation("Portfolio baseline snapshot created for {Date}", today);
         }
         catch (Exception ex)
         {
-            app.Logger.LogWarning($"Could not create initial portfolio snapshot: {ex.Message}");
+            app.Logger.LogWarning(
+                "Could not create portfolio snapshot at startup: {Message}", ex.Message);
         }
     }
 }
 
 #endregion
 
-#region Middleware
-
-// Allow enabling Swagger in Development or via configuration key "Swagger:EnableInProduction"
-var enableSwagger = app.Environment.IsDevelopment() ||
-                    builder.Configuration.GetValue<bool>("Swagger:EnableInProduction");
-
-if (enableSwagger)
+if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
-    app.UseSwaggerUI(c =>
-    {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "TradingBot API v1");
-        c.RoutePrefix = string.Empty; // Serve UI at app root
-    });
+    app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
-
 app.UseAuthorization();
-
 app.MapControllers();
-
-#endregion
 
 app.Run();
