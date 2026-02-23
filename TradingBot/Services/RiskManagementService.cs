@@ -1,9 +1,11 @@
-﻿using TradingBot.Persistence;
+using TradingBot.Persistence;
 using TradingBot.Domain.Enums;
+using TradingBot.Domain.Interfaces;
+using Microsoft.EntityFrameworkCore;
 
-namespace TradingBot.Application
+namespace TradingBot.Services
 {
-    public class RiskManagementService
+    public class RiskManagementService : IRiskManagementService
     {
         private readonly TradingBotDbContext _db;
 
@@ -27,10 +29,31 @@ namespace TradingBot.Application
             return tradeCount < MaxTradesPerDay;
         }
 
+        // 1B️⃣ Get daily starting balance (NEW - PRIORITY 2 FIX)
+        public async Task<decimal> GetDailyStartingBalanceAsync()
+        {
+            var today = DateTime.UtcNow.Date;
+            
+            var snapshot = await _db.PortfolioSnapshots
+                .Where(p => p.CreatedAt.Date == today)
+                .OrderBy(p => p.CreatedAt)
+                .FirstOrDefaultAsync();
+            
+            if (snapshot == null)
+            {
+                // No snapshot yet - return a safe value, caller should create snapshot
+                return 10000m; // Default - should be overridden
+            }
+            
+            return snapshot.TotalBalanceUSDT;
+        }
 
         // 2️⃣ Check daily loss limit
         public bool IsDailyLossExceeded(decimal currentBalance, decimal startingBalanceToday)
         {
+            if (startingBalanceToday <= 0)
+                return false;
+
             var lossPercent = (startingBalanceToday - currentBalance) / startingBalanceToday;
 
             return lossPercent >= DailyLossLimitPercent;

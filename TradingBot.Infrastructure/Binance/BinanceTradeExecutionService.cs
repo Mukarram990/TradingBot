@@ -1,8 +1,8 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using System.Text;
 using System.Text.Json;
-using TradingBot.Application;
+
 using TradingBot.Domain.Entities;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Interfaces;
@@ -19,10 +19,10 @@ namespace TradingBot.Infrastructure.Binance
         private readonly BinanceSignatureService _signatureService;
         private readonly TradingBotDbContext _dbContext;
         private readonly BinanceAccountService _accountService;
-        private readonly RiskManagementService _risk;
+        private readonly IRiskManagementService _risk;
 
 
-        public BinanceTradeExecutionService(HttpClient httpClient, IOptions<BinanceOptions> options, TradingBotDbContext dbContext, RiskManagementService risk, BinanceAccountService accountService)
+        public BinanceTradeExecutionService(HttpClient httpClient, IOptions<BinanceOptions> options, TradingBotDbContext dbContext, IRiskManagementService risk, BinanceAccountService accountService)
         {
             _httpClient = httpClient;
             _options = options.Value;
@@ -38,25 +38,29 @@ namespace TradingBot.Infrastructure.Binance
 
         public async Task<Order> OpenTradeAsync(TradeSignal signal)
         {
-            // 🔒 1️⃣ Max trades per day
+            // ?? 1?? Max trades per day
             if (!_risk.CanTradeToday())
                 throw new Exception("Max trades per day reached.");
 
-            // 🔒 2️⃣ Circuit breaker
+            // ?? 2?? Circuit breaker
             if (_risk.IsCircuitBreakerTriggered())
                 throw new Exception("Circuit breaker triggered. Too many losing trades.");
 
-            // 🔒 3️⃣ Stop loss validation
+            // ?? 3?? Stop loss validation
             if (!_risk.IsStopLossValid(signal.EntryPrice, signal.StopLoss))
                 throw new Exception("Invalid Stop Loss.");
 
-            // 🔒 4️⃣ Position sizing (example balance for now)
-            // 🔹 Get real USDT balance from Binance
+            // ?? 4?? Position sizing (example balance for now)
+            // ?? Get real USDT balance from Binance
             var accountBalance = await _accountService.GetAssetBalanceAsync("USDT");
 
             if (accountBalance <= 0)
                 throw new Exception("Insufficient USDT balance.");
 
+            // ADD: Daily loss limit check
+            var startingBalance = await _risk.GetDailyStartingBalanceAsync();
+            if (_risk.IsDailyLossExceeded(accountBalance, startingBalance))
+                throw new Exception("Daily loss limit exceeded. Trading halted.");
 
             var calculatedQuantity = _risk.CalculatePositionSize(
                 accountBalance,
@@ -67,7 +71,7 @@ namespace TradingBot.Infrastructure.Binance
             if (signal.Action != TradeAction.Buy)
                 throw new InvalidOperationException("Only BUY entry is supported in this method.");
 
-            // 1️⃣ Create Trade (Position)
+            // 1?? Create Trade (Position)
             var trade = new Trade
             {
                 Symbol = signal.Symbol,
@@ -82,13 +86,13 @@ namespace TradingBot.Infrastructure.Binance
             _dbContext.Trades.Add(trade);
             await _dbContext.SaveChangesAsync(); // Needed to generate Trade.ID
 
-            // 2️⃣ Sync time with Binance
+            // 2?? Sync time with Binance
             var serverTime = await GetServerTimeAsync();
             var localTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var timeOffset = serverTime - localTime;
             var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + timeOffset;
 
-            // 3️⃣ Build order query
+            // 3?? Build order query
             var query = new StringBuilder();
             query.Append($"symbol={signal.Symbol}");
             query.Append("&side=BUY");
@@ -132,14 +136,14 @@ namespace TradingBot.Infrastructure.Binance
                     System.Globalization.CultureInfo.InvariantCulture);
             }
 
-            // 4️⃣ Update Trade EntryPrice from real execution
+            // 4?? Update Trade EntryPrice from real execution
             if (executedPrice.HasValue)
             {
                 trade.EntryPrice = executedPrice.Value;
                 _dbContext.Trades.Update(trade);
             }
 
-            // 5️⃣ Save Order linked to Trade
+            // 5?? Save Order linked to Trade
             var order = new Order
             {
                 ExternalOrderId = result.GetProperty("orderId").GetInt64().ToString(),
@@ -159,23 +163,19 @@ namespace TradingBot.Infrastructure.Binance
 
         public async Task<Order> CloseTradeAsync(int tradeId)
         {
-            // 1️⃣ Load trade
+            // 1?? Load trade
             var trade = await _dbContext.Trades
-                .FirstOrDefaultAsync(t => t.ID == tradeId);
-
-            if (trade == null)
-                throw new Exception("Trade not found.");
-
+                .FirstOrDefaultAsync(t => t.ID == tradeId) ?? throw new Exception("Trade not found.");
             if (trade.Status != TradeStatus.Open)
                 throw new Exception("Trade is not open.");
 
-            // 2️⃣ Sync time with Binance
+            // 2?? Sync time with Binance
             var serverTime = await GetServerTimeAsync();
             var localTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var timeOffset = serverTime - localTime;
             var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + timeOffset;
 
-            // 3️⃣ Build SELL order
+            // 3?? Build SELL order
             var query = new StringBuilder();
             query.Append($"symbol={trade.Symbol}");
             query.Append("&side=SELL");
@@ -217,11 +217,11 @@ namespace TradingBot.Infrastructure.Binance
             if (!executedPrice.HasValue)
                 throw new Exception("Could not determine executed price.");
 
-            // 4️⃣ Calculate PnL
+            // 4?? Calculate PnL
             var pnl = (executedPrice.Value - trade.EntryPrice) * trade.Quantity;
             var pnlPercent = ((executedPrice.Value - trade.EntryPrice) / trade.EntryPrice) * 100m;
 
-            // 5️⃣ Update Trade
+            // 5?? Update Trade
             trade.ExitPrice = executedPrice.Value;
             trade.ExitTime = DateTime.UtcNow;
             trade.PnL = Math.Round(pnl, 6);
@@ -230,7 +230,7 @@ namespace TradingBot.Infrastructure.Binance
 
             _dbContext.Trades.Update(trade);
 
-            // 6️⃣ Save SELL Order linked to Trade
+            // 6?? Save SELL Order linked to Trade
             var order = new Order
             {
                 ExternalOrderId = result.GetProperty("orderId").GetInt64().ToString(),
@@ -276,3 +276,4 @@ namespace TradingBot.Infrastructure.Binance
         }
     }
 }
+
