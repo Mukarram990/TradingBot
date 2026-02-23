@@ -1,12 +1,12 @@
-﻿using TradingBot.Persistence;
+using TradingBot.Persistence;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Interfaces;
 using TradingBot.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
-namespace TradingBot.Application
+namespace TradingBot.Services
 {
-    public class RiskManagementService
+    public class RiskManagementService : IRiskManagementService
     {
         private readonly TradingBotDbContext _db;
 

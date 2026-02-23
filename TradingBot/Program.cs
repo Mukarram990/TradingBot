@@ -1,10 +1,13 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
-using TradingBot.Application;
 using TradingBot.Domain.Interfaces;
 using TradingBot.Infrastructure.Binance;
 using TradingBot.Infrastructure.Binance.Models;
+using TradingBot.Infrastructure.Services;
 using TradingBot.Persistence;
+using TradingBot.Persistence.SeedData;
+using TradingBot.Services;
+using TradingBot.Workers;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -26,7 +29,11 @@ builder.Services.AddHttpClient<IMarketDataService, BinanceMarketDataService>();
 builder.Services.AddHttpClient<BinanceAccountService>();
 builder.Services.AddScoped<PortfolioManager>();
 builder.Services.AddScoped<RiskManagementService>();
+builder.Services.AddScoped<IRiskManagementService>(sp => sp.GetRequiredService<RiskManagementService>());
 
+// ✅ NEW: Register Trade Monitoring Service (PRIORITY 3 FIX)
+builder.Services.AddScoped<ITradeMonitoringService, TradeMonitoringService>();
+builder.Services.AddHostedService<TradeMonitoringWorker>();
 
 #endregion
 
@@ -44,6 +51,40 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 var app = builder.Build();
+
+#region Initialize Data
+
+// ✅ NEW: Initialize daily baseline snapshot (PRIORITY 2 FIX)
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<TradingBotDbContext>();
+    var portfolioManager = scope.ServiceProvider.GetRequiredService<PortfolioManager>();
+
+    // Apply migrations
+    await db.Database.MigrateAsync();
+
+    // Seed risk profile
+    await RiskProfileSeeder.SeedDefaultRiskProfileAsync(db);
+
+    // Create baseline snapshot if not exists for today
+    var today = DateTime.UtcNow.Date;
+    var existsToday = await db.PortfolioSnapshots
+        .AnyAsync(p => p.CreatedAt.Date == today);
+
+    if (!existsToday)
+    {
+        try
+        {
+            await portfolioManager.CreateSnapshotAsync();
+        }
+        catch (Exception ex)
+        {
+            app.Logger.LogWarning($"Could not create initial portfolio snapshot: {ex.Message}");
+        }
+    }
+}
+
+#endregion
 
 #region Middleware
 

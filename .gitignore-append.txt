@@ -1,0 +1,11 @@
+# User Secrets & API Keys
+secrets.json
+.user-secrets/
+appsettings.local.json
+appsettings.*.local.json
+*.apikey
+*.secret
+
+# Environment Variables
+.env
+.env.local

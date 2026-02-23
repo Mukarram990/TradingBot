@@ -1,9 +1,9 @@
-﻿using TradingBot.Domain.Entities;
+using TradingBot.Domain.Entities;
 using TradingBot.Domain.Interfaces;
 using TradingBot.Infrastructure.Binance;
 using TradingBot.Persistence;
 
-namespace TradingBot.Application
+namespace TradingBot.Services
 {
     public class PortfolioManager
     {
