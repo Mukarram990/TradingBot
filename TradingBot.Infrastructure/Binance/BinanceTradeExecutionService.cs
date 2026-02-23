@@ -161,11 +161,7 @@ namespace TradingBot.Infrastructure.Binance
         {
             // 1️⃣ Load trade
             var trade = await _dbContext.Trades
-                .FirstOrDefaultAsync(t => t.ID == tradeId);
-
-            if (trade == null)
-                throw new Exception("Trade not found.");
-
+                .FirstOrDefaultAsync(t => t.ID == tradeId) ?? throw new Exception("Trade not found.");
             if (trade.Status != TradeStatus.Open)
                 throw new Exception("Trade is not open.");
 
