@@ -29,6 +29,10 @@ builder.Services.AddHttpClient<ITradeExecutionService, BinanceTradeExecutionServ
 builder.Services.AddHttpClient<IMarketDataService, BinanceMarketDataService>();
 builder.Services.AddHttpClient<BinanceAccountService>();
 
+#endregion
+
+#region Application Services
+
 builder.Services.AddScoped<PortfolioManager>();
 builder.Services.AddScoped<RiskManagementService>();
 builder.Services.AddScoped<IRiskManagementService>(sp => sp.GetRequiredService<RiskManagementService>());
@@ -37,8 +41,11 @@ builder.Services.AddScoped<IRiskManagementService>(sp => sp.GetRequiredService<R
 builder.Services.AddScoped<ITradeMonitoringService, TradeMonitoringService>();
 builder.Services.AddHostedService<TradeMonitoringWorker>();
 
-// Phase 2 Step 1: Indicator calculation service
+// Phase 2 - Step 1: Indicator calculation
 builder.Services.AddScoped<IIndicatorService, IndicatorCalculationService>();
+
+// Phase 2 - Step 2: Market scanner (depends on IIndicatorService)
+builder.Services.AddScoped<IMarketScannerService, MarketScannerService>();
 
 #endregion
 
@@ -57,20 +64,23 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
-#region Initialize Data
+#region Startup Initialization
 
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<TradingBotDbContext>();
     var portfolioManager = scope.ServiceProvider.GetRequiredService<PortfolioManager>();
 
-    // Apply any pending migrations automatically
+    // 1. Apply any pending EF migrations automatically
     await db.Database.MigrateAsync();
 
-    // Seed default risk profile if none exists
+    // 2. Seed default risk profile (2% risk, 5% daily loss limit, 5 trades/day)
     await RiskProfileSeeder.SeedDefaultRiskProfileAsync(db);
 
-    // Create today's portfolio baseline snapshot if not already done
+    // 3. Seed default trading pairs (BTC, ETH, BNB, SOL, XRP)
+    await TradingPairsSeeder.SeedDefaultPairsAsync(db);
+
+    // 4. Create today's portfolio baseline snapshot if not already done
     var today = DateTime.UtcNow.Date;
     bool hasToday = await db.PortfolioSnapshots!
         .AnyAsync(p => p.CreatedAt.Date == today);
@@ -80,7 +90,8 @@ using (var scope = app.Services.CreateScope())
         try
         {
             await portfolioManager.CreateSnapshotAsync();
-            app.Logger.LogInformation("Portfolio baseline snapshot created for {Date}", today);
+            app.Logger.LogInformation(
+                "Portfolio baseline snapshot created for {Date:yyyy-MM-dd}", today);
         }
         catch (Exception ex)
         {
