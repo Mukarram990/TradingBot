@@ -41,11 +41,14 @@ builder.Services.AddScoped<IRiskManagementService>(sp => sp.GetRequiredService<R
 builder.Services.AddScoped<ITradeMonitoringService, TradeMonitoringService>();
 builder.Services.AddHostedService<TradeMonitoringWorker>();
 
-// Phase 2 - Step 1: Indicator calculation
+// Phase 2 — Step 1: Indicator calculation
 builder.Services.AddScoped<IIndicatorService, IndicatorCalculationService>();
 
-// Phase 2 - Step 2: Market scanner (depends on IIndicatorService)
+// Phase 2 — Step 2: Market scanner (depends on IIndicatorService)
 builder.Services.AddScoped<IMarketScannerService, MarketScannerService>();
+
+// Phase 2 — Step 3: Strategy engine (depends on IMarketScannerService)
+builder.Services.AddScoped<IStrategyEngine, StrategyEngine>();
 
 #endregion
 
