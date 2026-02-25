@@ -64,7 +64,7 @@ builder.Services.AddSwaggerGen(c =>
     {
         Title = "TradingBot API",
         Version = "v1",
-        Description = "Automated crypto trading bot — Binance integration"
+        Description = "Automated crypto trading bot with Binance integration"
     });
 });
 
@@ -77,16 +77,10 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<TradingBotDbContext>();
     var portfolioManager = scope.ServiceProvider.GetRequiredService<PortfolioManager>();
 
-    // 1. Apply any pending EF Core migrations automatically
     await db.Database.MigrateAsync();
-
-    // 2. Seed default risk profile if none exists
     await RiskProfileSeeder.SeedDefaultRiskProfileAsync(db);
-
-    // 3. Seed default trading pairs if table is empty
     await TradingPairsSeeder.SeedDefaultPairsAsync(db);
 
-    // 4. Create today's portfolio baseline snapshot if not yet created today
     var today = DateTime.UtcNow.Date;
     bool hasToday = await db.PortfolioSnapshots!
         .AnyAsync(p => p.CreatedAt.Date == today);
@@ -96,13 +90,11 @@ using (var scope = app.Services.CreateScope())
         try
         {
             await portfolioManager.CreateSnapshotAsync();
-            app.Logger.LogInformation(
-                "Portfolio baseline snapshot created for {Date:yyyy-MM-dd}", today);
+            app.Logger.LogInformation("Portfolio baseline created for {Date:yyyy-MM-dd}", today);
         }
         catch (Exception ex)
         {
-            app.Logger.LogWarning(
-                "Could not create portfolio snapshot at startup: {Message}", ex.Message);
+            app.Logger.LogWarning("Could not create portfolio snapshot: {Message}", ex.Message);
         }
     }
 }
