@@ -101,6 +101,8 @@ using (var scope = app.Services.CreateScope())
 
 #endregion
 
+app.UseStaticFiles();
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
