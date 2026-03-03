@@ -1,40 +1,33 @@
-﻿using TradingBot.Domain.Entities;
+﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using TradingBot.Domain.Entities;
 using TradingBot.Domain.Interfaces;
+using TradingBot.Infrastructure.AI;
 using TradingBot.Persistence;
 
 namespace TradingBot.Workers
 {
     /// <summary>
-    /// Background worker that runs the full automated trading pipeline
-    /// every 5 minutes:
+    /// Phase 2 + Phase 3 combined background worker.
     ///
-    ///   Tick N:
-    ///     1. ScanAllPairsAsync()          — fetch candles + compute indicators for every active pair
-    ///     2. EvaluateSignal(snapshot)     — apply strategy rules + confidence scoring
-    ///     3. Risk gate                    — CanTradeToday? CircuitBreaker triggered?
-    ///     4. OpenTradeAsync(signal)       — send BUY order to Binance
-    ///     5. Log everything to SystemLog  — full audit trail
+    /// TICK PIPELINE (every 5 minutes):
+    ///   1. Outer risk gates (CanTradeToday, CircuitBreaker)
+    ///   2. ScanAllPairsAsync — fetch candles, compute indicators, save snapshots
+    ///   3. For each snapshot:
+    ///      a. AIEnhancedStrategyEngine.EvaluateWithAIAsync
+    ///         → rule engine → regime gate → AI validation (multi-provider)
+    ///      b. If approved → persist TradeSignal → OpenTradeAsync
+    ///   4. Tick summary log
     ///
-    /// Design notes:
-    ///   - A new DI scope is created for every tick so all Scoped services
-    ///     (DbContext, Binance clients, etc.) are resolved fresh each time.
-    ///     This matches the pattern used by TradeMonitoringWorker.
-    ///   - A single failed pair (Binance error, bad indicator data, etc.) never
-    ///     aborts the rest of the pairs in the same tick.
-    ///   - The worker waits for the full tick to complete before starting the
-    ///     next delay, so a slow Binance API cannot cause ticks to stack up.
-    ///   - An initial warm-up delay of 30 s gives Program.cs seeders and the
-    ///     portfolio snapshot time to complete before the first scan.
+    /// AI failures (all providers exhausted) are handled gracefully —
+    /// the trade is skipped for that symbol, other symbols continue.
     /// </summary>
     public class SignalGenerationWorker : BackgroundService
     {
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<SignalGenerationWorker> _logger;
-
-        // How often to run the full scan + evaluate + trade pipeline.
         private readonly TimeSpan _interval = TimeSpan.FromMinutes(5);
-
-        // Short pause before the very first scan so startup seeders can finish.
         private readonly TimeSpan _initialDelay = TimeSpan.FromSeconds(30);
 
         public SignalGenerationWorker(
@@ -45,46 +38,28 @@ namespace TradingBot.Workers
             _logger = logger;
         }
 
-        // ════════════════════════════════════════════════════════════════════
-        // BackgroundService entry point
-        // ════════════════════════════════════════════════════════════════════
-
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             _logger.LogInformation(
-                "Signal Generation Worker started. " +
-                "First scan in {Delay}s, then every {Interval} min.",
-                _initialDelay.TotalSeconds, _interval.TotalMinutes);
+                "Signal Generation Worker started (AI-enhanced). First scan in {Delay}s, then every {Interval}.",
+                _initialDelay.TotalSeconds, _interval);
 
-            // Wait for startup to fully settle before first scan.
             await Task.Delay(_initialDelay, stoppingToken);
 
             while (!stoppingToken.IsCancellationRequested)
             {
-                _logger.LogInformation(
-                    "[{Time:HH:mm:ss}] Signal Generation Worker — starting tick",
-                    DateTime.UtcNow);
-
                 try
                 {
                     await RunTickAsync(stoppingToken);
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
-                    // App is shutting down — exit cleanly.
                     break;
                 }
                 catch (Exception ex)
                 {
-                    // Unexpected error at the tick level. Log it but keep the worker alive.
-                    _logger.LogError(ex,
-                        "Unhandled exception in Signal Generation Worker tick. " +
-                        "Worker will retry in {Interval} min.", _interval.TotalMinutes);
+                    _logger.LogError(ex, "SignalGenerationWorker: unhandled tick error.");
                 }
-
-                _logger.LogInformation(
-                    "[{Time:HH:mm:ss}] Tick complete. Next scan in {Interval} min.",
-                    DateTime.UtcNow, _interval.TotalMinutes);
 
                 await Task.Delay(_interval, stoppingToken);
             }
@@ -92,243 +67,162 @@ namespace TradingBot.Workers
             _logger.LogInformation("Signal Generation Worker stopped.");
         }
 
-        // ════════════════════════════════════════════════════════════════════
-        // One full tick: scan → evaluate → trade
-        // ════════════════════════════════════════════════════════════════════
-
-        private async Task RunTickAsync(CancellationToken stoppingToken)
+        private async Task RunTickAsync(CancellationToken ct)
         {
-            // New scope per tick — all Scoped services (DbContext, HTTP clients)
-            // are fresh for each run, avoiding stale state across ticks.
+            _logger.LogInformation("SignalGenerationWorker: starting tick at {Time:HH:mm:ss}", DateTime.UtcNow);
+
             using var scope = _serviceProvider.CreateScope();
+            var sp = scope.ServiceProvider;
 
-            var scanner = scope.ServiceProvider.GetRequiredService<IMarketScannerService>();
-            var strategy = scope.ServiceProvider.GetRequiredService<IStrategyEngine>();
-            var risk = scope.ServiceProvider.GetRequiredService<IRiskManagementService>();
-            var executor = scope.ServiceProvider.GetRequiredService<ITradeExecutionService>();
-            var db = scope.ServiceProvider.GetRequiredService<TradingBotDbContext>();
+            var scanner = sp.GetRequiredService<IMarketScannerService>();
+            var aiEngine = sp.GetRequiredService<AIEnhancedStrategyEngine>();
+            var riskMgr = sp.GetRequiredService<IRiskManagementService>();
+            var tradeExec = sp.GetRequiredService<ITradeExecutionService>();
+            var db = sp.GetRequiredService<TradingBotDbContext>();
 
-            // ── Step 1: Outer risk gates ─────────────────────────────────────
-            // Check these once per tick — if the daily budget is already used up
-            // there is no point scanning the market at all.
-
-            if (!risk.CanTradeToday())
+            // ── Outer risk gates ─────────────────────────────────────────
+            if (!riskMgr.CanTradeToday())
             {
-                _logger.LogInformation(
-                    "Signal Worker: max trades for today already reached — skipping scan.");
-                await WriteLogAsync(db, "INFO",
-                    "SignalGenerationWorker: max daily trades reached. Scan skipped.");
+                _logger.LogInformation("SignalGenerationWorker: max daily trades reached. Scan skipped.");
+                await WriteLogAsync(db, "INFO", "SignalGenerationWorker: max daily trades reached. Scan skipped.");
                 return;
             }
 
-            if (risk.IsCircuitBreakerTriggered())
+            if (riskMgr.IsCircuitBreakerTriggered())
             {
-                _logger.LogWarning(
-                    "Signal Worker: circuit breaker is active (too many losses today) — skipping scan.");
-                await WriteLogAsync(db, "WARN",
-                    "SignalGenerationWorker: circuit breaker triggered. Scan skipped.");
+                _logger.LogWarning("SignalGenerationWorker: circuit breaker triggered. Scan skipped.");
+                await WriteLogAsync(db, "WARN", "SignalGenerationWorker: circuit breaker triggered. Scan skipped.");
                 return;
             }
 
-            // ── Step 2: Scan all active pairs ────────────────────────────────
-            // MarketScannerService fetches candles from Binance, computes all
-            // indicators (RSI, EMA, MACD, ATR, Volume, S/R) and saves snapshots.
-
+            // ── Scan all pairs ───────────────────────────────────────────
             List<IndicatorSnapshot> snapshots;
             try
             {
-                snapshots = await scanner.ScanAllPairsAsync(interval: "1h", candleCount: 100);
+                snapshots = await scanner.ScanAllPairsAsync("1h", 100);
+                _logger.LogInformation("SignalGenerationWorker: scanned {Count} pairs.", snapshots.Count);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Signal Worker: ScanAllPairsAsync failed.");
-                await WriteLogAsync(db, "ERROR",
-                    $"SignalGenerationWorker: market scan failed — {ex.Message}",
-                    ex.ToString());
+                _logger.LogError(ex, "SignalGenerationWorker: market scan failed.");
                 return;
             }
 
-            _logger.LogInformation(
-                "Signal Worker: scan complete — {Count} snapshot(s) received.", snapshots.Count);
+            int signalsGenerated = 0, tradesOpened = 0;
 
-            if (snapshots.Count == 0)
-            {
-                await WriteLogAsync(db, "WARN",
-                    "SignalGenerationWorker: no snapshots returned from market scan.");
-                return;
-            }
-
-            // ── Step 3: Evaluate each snapshot ──────────────────────────────
-            int signalsGenerated = 0;
-            int tradesOpened = 0;
-
+            // ── Process each pair ────────────────────────────────────────
             foreach (var snapshot in snapshots)
             {
-                if (stoppingToken.IsCancellationRequested)
-                    break;
-
-                string symbol = snapshot.Symbol ?? "UNKNOWN";
+                if (ct.IsCancellationRequested) break;
 
                 try
                 {
-                    var result = await ProcessSnapshotAsync(
-                        snapshot, symbol,
-                        risk, executor, db,
-                        strategy,
-                        stoppingToken);
-                    signalsGenerated += result.signalsGenerated;
-                    tradesOpened += result.tradesOpened;
+                    var (sig, trd) = await ProcessSnapshotAsync(
+                        snapshot, aiEngine, riskMgr, tradeExec, db, ct);
+                    signalsGenerated += sig;
+                    tradesOpened += trd;
                 }
                 catch (Exception ex)
                 {
-                    // One pair failing must never abort the rest.
                     _logger.LogError(ex,
-                        "Signal Worker: unhandled error processing {Symbol}", symbol);
-                    await WriteLogAsync(db, "ERROR",
-                        $"SignalGenerationWorker: error on {symbol} — {ex.Message}",
-                        ex.ToString());
+                        "SignalGenerationWorker: error processing snapshot for {Symbol}.",
+                        snapshot.Symbol);
                 }
             }
 
-            // ── Step 4: Tick summary log ──────────────────────────────────────
-            string summary =
-                $"SignalGenerationWorker tick complete — " +
-                $"Snapshots={snapshots.Count}, " +
-                $"SignalsGenerated={signalsGenerated}, " +
-                $"TradesOpened={tradesOpened}";
-
-            _logger.LogInformation("Signal Worker: {Summary}", summary);
+            var summary = $"SignalGenerationWorker tick complete — " +
+                          $"Snapshots={snapshots.Count}, " +
+                          $"SignalsGenerated={signalsGenerated}, " +
+                          $"TradesOpened={tradesOpened}";
+            _logger.LogInformation(summary);
             await WriteLogAsync(db, "INFO", summary);
         }
 
-        // ════════════════════════════════════════════════════════════════════
-        // Per-snapshot processing
-        // ════════════════════════════════════════════════════════════════════
-
         private async Task<(int signalsGenerated, int tradesOpened)> ProcessSnapshotAsync(
             IndicatorSnapshot snapshot,
-            string symbol,
-            IRiskManagementService risk,
-            ITradeExecutionService executor,
+            AIEnhancedStrategyEngine aiEngine,
+            IRiskManagementService riskMgr,
+            ITradeExecutionService tradeExec,
             TradingBotDbContext db,
-            IStrategyEngine strategy,
-            CancellationToken stoppingToken)
+            CancellationToken ct)
         {
-            int signalsGenerated = 0;
-            int tradesOpened = 0;
+            int sig = 0, trd = 0;
 
-            // ── 3a: Strategy evaluation ──────────────────────────────────────
-            // EvaluateSignal is pure computation (no I/O) — synchronous by design.
-            var signal = strategy.EvaluateSignal(snapshot);
-
-            if (signal == null)
-            {
-                _logger.LogDebug(
-                    "Signal Worker: no signal for {Symbol} " +
-                    "(RSI={RSI:F1}, Trend={Trend}, MACD={MACD:F4})",
-                    symbol, snapshot.RSI, snapshot.Trend, snapshot.MACD);
-                return (signalsGenerated, tradesOpened);
-            }
-
-            signalsGenerated++;
-
-            _logger.LogInformation(
-                "Signal Worker: BUY signal for {Symbol} " +
-                "Confidence={Conf}/100, Entry={Entry:F4}, SL={SL:F4}, TP={TP:F4}",
-                symbol, signal.AIConfidence, signal.EntryPrice, signal.StopLoss, signal.TakeProfit);
-
-            // Persist the signal for audit / history regardless of whether we
-            // ultimately open the trade.
-            db.TradeSignals!.Add(signal);
-            await db.SaveChangesAsync();
-
-            await WriteLogAsync(db, "INFO",
-                $"SignalGenerationWorker: BUY signal for {symbol} " +
-                $"Confidence={signal.AIConfidence}, Entry={signal.EntryPrice:F4}, " +
-                $"SL={signal.StopLoss:F4}, TP={signal.TakeProfit:F4}");
-
-            // ── 3b: Per-signal risk gate ─────────────────────────────────────
-            // Re-check after each signal because a trade opened for a previous
-            // symbol in this same tick may have already consumed the daily budget.
-
-            if (!risk.CanTradeToday())
-            {
-                _logger.LogInformation(
-                    "Signal Worker: signal for {Symbol} skipped — daily trade limit now reached.",
-                    symbol);
-                await WriteLogAsync(db, "INFO",
-                    $"SignalGenerationWorker: signal for {symbol} skipped — daily trade limit reached.");
-                return (signalsGenerated, tradesOpened);
-            }
-
-            if (risk.IsCircuitBreakerTriggered())
-            {
-                _logger.LogWarning(
-                    "Signal Worker: signal for {Symbol} skipped — circuit breaker active.",
-                    symbol);
-                await WriteLogAsync(db, "WARN",
-                    $"SignalGenerationWorker: signal for {symbol} skipped — circuit breaker active.");
-                return (signalsGenerated, tradesOpened);
-            }
-
-            // Check daily loss limit (balances are fetched from Binance inside risk service).
-            var startingBalance = await risk.GetDailyStartingBalanceAsync();
-            // We pass 0 as currentBalance to avoid an extra Binance API call here —
-            // OpenTradeAsync will do its own full loss check internally.
-            // This check is a quick pre-filter: if starting balance is unknown (0)
-            // we still allow OpenTradeAsync to decide, since it has the real balance.
-            // If startingBalance > 0 we do the pre-check with a conservative estimate.
-            // The definitive check always happens inside OpenTradeAsync.
-
-            // ── 3c: Execute trade ────────────────────────────────────────────
-            // OpenTradeAsync internally:
-            //   - fetches real USDT balance from Binance
-            //   - re-validates daily loss limit
-            //   - calculates position size (2% rule)
-            //   - places MARKET BUY order
-            //   - saves Trade + Order to DB
-
+            // ── AI-enhanced signal evaluation ────────────────────────────
+            TradeSignal? signal;
             try
             {
-                var order = await executor.OpenTradeAsync(signal);
-                tradesOpened++;
+                signal = await aiEngine.EvaluateWithAIAsync(snapshot, ct);
+            }
+            catch (AiAllProvidersExhaustedException ex)
+            {
+                _logger.LogWarning(
+                    "SignalGenerationWorker [{Symbol}]: AI exhausted — skipping. {Msg}",
+                    snapshot.Symbol, ex.Message);
+                return (0, 0);
+            }
 
+            if (signal == null)
+                return (0, 0);
+
+            // ── Persist TradeSignal ──────────────────────────────────────
+            db.TradeSignals!.Add(signal);
+            await db.SaveChangesAsync(ct);
+            sig = 1;
+
+            await WriteLogAsync(db, "INFO",
+                $"SignalGenerationWorker: AI-approved BUY signal for {snapshot.Symbol} " +
+                $"Confidence={signal.AIConfidence}, Entry={signal.EntryPrice:F4}");
+
+            _logger.LogInformation(
+                "SignalGenerationWorker: AI-approved BUY signal for {Symbol} — " +
+                "confidence={Conf}, entry={Entry:F4}, SL={SL:F4}, TP={TP:F4}",
+                snapshot.Symbol, signal.AIConfidence,
+                signal.EntryPrice, signal.StopLoss, signal.TakeProfit);
+
+            // ── Per-signal risk re-check ─────────────────────────────────
+            if (!riskMgr.CanTradeToday())
+            {
                 _logger.LogInformation(
-                    "Signal Worker: trade OPENED for {Symbol} — " +
-                    "OrderId={OrderId}, Qty={Qty}, ExecutedAt={Price:F4}",
-                    symbol, order.ExternalOrderId, order.Quantity, order.ExecutedPrice);
+                    "SignalGenerationWorker: max trades reached after signal for {Symbol}. Stopping.", snapshot.Symbol);
+                return (sig, trd);
+            }
+
+            if (riskMgr.IsCircuitBreakerTriggered())
+            {
+                _logger.LogWarning(
+                    "SignalGenerationWorker: circuit breaker triggered after signal for {Symbol}. Stopping.", snapshot.Symbol);
+                return (sig, trd);
+            }
+
+            // ── Execute trade ────────────────────────────────────────────
+            try
+            {
+                var order = await tradeExec.OpenTradeAsync(signal);
+                trd = 1;
 
                 await WriteLogAsync(db, "INFO",
-                    $"SignalGenerationWorker: trade opened for {symbol} — " +
-                    $"OrderId={order.ExternalOrderId}, " +
-                    $"Qty={order.Quantity}, " +
-                    $"Price={order.ExecutedPrice:F4}");
+                    $"SignalGenerationWorker: trade opened for {snapshot.Symbol} — " +
+                    $"OrderId={order.ExternalOrderId}, Price={order.ExecutedPrice:F4}");
+
+                _logger.LogInformation(
+                    "SignalGenerationWorker: trade OPENED for {Symbol} — " +
+                    "orderId={OrderId}, executedPrice={Price:F4}",
+                    snapshot.Symbol, order.ExternalOrderId, order.ExecutedPrice);
             }
             catch (Exception ex)
             {
-                // Trade execution failed (Binance rejected, daily limit, etc.)
-                // Log and continue — this is not a crash-worthy event.
                 _logger.LogError(ex,
-                    "Signal Worker: failed to open trade for {Symbol} — {Message}",
-                    symbol, ex.Message);
-
+                    "SignalGenerationWorker: failed to open trade for {Symbol}.", snapshot.Symbol);
                 await WriteLogAsync(db, "ERROR",
-                    $"SignalGenerationWorker: trade execution failed for {symbol} — {ex.Message}",
-                    ex.ToString());
+                    $"SignalGenerationWorker: failed to open trade for {snapshot.Symbol}: {ex.Message}",
+                    ex.StackTrace);
             }
 
-            return (signalsGenerated, tradesOpened);
+            return (sig, trd);
         }
 
-        // ════════════════════════════════════════════════════════════════════
-        // Helper: write to SystemLog table
-        // ════════════════════════════════════════════════════════════════════
-
-        /// <summary>
-        /// Persists a structured log entry to the SystemLogs table.
-        /// Failures here are swallowed so a logging error never crashes the worker.
-        /// </summary>
-        private async Task WriteLogAsync(
+        private static async Task WriteLogAsync(
             TradingBotDbContext db,
             string level,
             string message,
@@ -344,11 +238,7 @@ namespace TradingBot.Workers
                 });
                 await db.SaveChangesAsync();
             }
-            catch (Exception ex)
-            {
-                // Never let a logging failure propagate up.
-                _logger.LogWarning(ex, "Signal Worker: failed to write SystemLog entry.");
-            }
+            catch { /* logging failure must never crash the worker */ }
         }
     }
 }

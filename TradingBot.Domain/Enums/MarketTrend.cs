@@ -5,6 +5,7 @@
         Unknown = 0,
         Bullish = 1,
         Bearish = 2,
-        Sideways = 3
+        Sideways = 3,
+        Volatile = 4
     }
 }
