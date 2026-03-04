@@ -1,317 +1,575 @@
-# 🤖 TradingBot
+# TradingBot — Automated Crypto Trading System
 
-> An automated crypto trading bot built on **.NET 10** + **C#**, integrating with the **Binance API** for real-time trade execution, risk management, and portfolio protection — designed to eventually run autonomously with AI-powered signal validation.
-
----
-
-## 📋 Table of Contents
-
-- [Overview](#overview)
-- [Architecture](#architecture)
-- [Features](#features)
-- [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Getting Started](#getting-started)
-- [API Reference](#api-reference)
-- [Configuration](#configuration)
-- [Roadmap](#roadmap)
-- [Development Progress](#development-progress)
+> **Stack:** .NET 10 · SQL Server · Binance API · Multi-AI (Gemini · Groq · OpenRouter · Cohere)  
+> **Status:** ✅ Production-Hardened · All 4 phases complete · Security implemented  
+> **Base URL (local):** `http://localhost:5000`  
+> **Swagger UI:** `http://localhost:5000/swagger`
 
 ---
 
-## Overview
+## Table of Contents
 
-TradingBot is a server-side trading automation system that connects to the Binance testnet (and eventually mainnet) to execute spot trades. It enforces strict risk rules, monitors open positions 24/7, and is being built toward fully autonomous signal-to-trade execution powered by technical indicators and Gemini AI.
-
-**Current Phase**: Phase 1 complete — secure foundation with full trade lifecycle, automated SL/TP monitoring, and configurable risk management.
+1. [What This System Does](#1-what-this-system-does)
+2. [Architecture](#2-architecture)
+3. [Project Structure](#3-project-structure)
+4. [Prerequisites & Setup](#4-prerequisites--setup)
+5. [Configuration & Secrets](#5-configuration--secrets)
+6. [Running the Application](#6-running-the-application)
+7. [Complete API Reference](#7-complete-api-reference)
+8. [Response Shapes & Enums](#8-response-shapes--enums)
+9. [Error Handling](#9-error-handling)
+10. [Rate Limiting & Security](#10-rate-limiting--security)
+11. [Background Workers](#11-background-workers)
+12. [Database Schema Overview](#12-database-schema-overview)
+13. [Frontend Integration Guide](#13-frontend-integration-guide)
+14. [Development Notes](#14-development-notes)
 
 ---
 
-## Architecture
+## 1. What This System Does
 
-The solution follows a clean **layered architecture** with full separation of concerns:
+TradingBot is a fully automated spot-crypto trading system that:
+
+- **Scans** up to 5 configurable Binance pairs every 5 minutes
+- **Calculates** 7 technical indicators (RSI, EMA20/50, MACD, ATR, Volume Spike, Support/Resistance)
+- **Evaluates** a rule-based strategy engine with 5 confluence gates and confidence scoring
+- **Validates** signals through a 4-provider AI layer (Gemini → Groq → OpenRouter → Cohere) with automatic failover on rate limits
+- **Executes** trades on Binance using MARKET orders with VWAP-accurate fill pricing
+- **Monitors** all open positions every 10 seconds and auto-closes on Stop Loss / Take Profit hit
+- **Tracks** daily performance, calculates PnL, and enforces a daily loss circuit breaker
+- **Exposes** 40+ REST API endpoints for a dashboard frontend to consume
+
+---
+
+## 2. Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                    TradingBot (API Layer)                     │
-│   Controllers · Workers · Services · Program.cs              │
-└────────────────────────────┬─────────────────────────────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              ▼              ▼              ▼
-┌─────────────────┐  ┌──────────────┐  ┌──────────────────────┐
-│ TradingBot      │  │ TradingBot   │  │ TradingBot           │
-│ .Domain         │  │ .Persistence │  │ .Infrastructure      │
-│                 │  │              │  │                      │
-│ Entities        │  │ DbContext    │  │ Binance API clients  │
-│ Interfaces      │  │ Migrations   │  │ Signature service    │
-│ Enums           │  │ Seed data    │  │ Trade monitoring     │
-└─────────────────┘  └──────────────┘  └──────────────────────┘
-              │
-              ▼
-┌─────────────────┐
-│ TradingBot      │
-│ .Application    │
-│                 │
-│ Indicator calc  │
-│ Market scanner  │
-│ Strategy engine │
-└─────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                    Frontend Dashboard                    │
+│              (React / Vue / Next.js / etc.)             │
+└────────────────────────┬────────────────────────────────┘
+                         │ HTTP REST + JSON
+┌────────────────────────▼────────────────────────────────┐
+│                  TradingBot Web API (.NET 10)            │
+│                                                         │
+│  Middleware: RateLimiter → ExceptionHandler → Auth      │
+│                                                         │
+│  10 Controllers:                                        │
+│  Trade · Market · Portfolio · Risk · Performance        │
+│  AI · Scanner · Indicators · Strategy · System          │
+│                                                         │
+│  Background Workers:                                    │
+│  ├─ SignalGenerationWorker  (every 5 min)               │
+│  ├─ TradeMonitoringWorker   (every 10 sec)              │
+│  └─ DailyPerformanceWorker  (midnight UTC)              │
+└──────────┬──────────────────────────┬───────────────────┘
+           │                          │
+┌──────────▼──────────┐   ┌──────────▼──────────────────┐
+│   SQL Server DB     │   │   Binance API (Polly)        │
+│   14 Tables         │   │   retry + circuit breaker    │
+│   EF Core / int IDs │   │   BinanceTradeExecution      │
+│   decimal(18,8)     │   │   BinanceMarketData          │
+└─────────────────────┘   │   BinanceAccount             │
+                          └──────────┬──────────────────┘
+                                     │
+                          ┌──────────▼──────────────────┐
+                          │   AI Providers (fallback)   │
+                          │   Gemini → Groq →           │
+                          │   OpenRouter → Cohere       │
+                          └─────────────────────────────┘
 ```
 
----
-
-## Features
-
-### ✅ Implemented (Phase 1)
-
-| Feature | Description |
-|---|---|
-| **Trade Execution** | Open and close spot trades on Binance via REST API |
-| **Position Sizing** | Automatic 2% risk-per-trade calculation (Kelly Criterion) |
-| **Daily Loss Limit** | Stops all trading if portfolio drops >5% in a day |
-| **Circuit Breaker** | Halts trading after N consecutive losing trades |
-| **SL/TP Auto-Close** | Background worker checks open trades every 10 seconds and closes on trigger |
-| **Risk Profile API** | Change risk parameters at runtime via API — no recompile needed |
-| **Portfolio Snapshots** | Daily baseline balance tracking for loss calculation |
-| **Secure Config** | API keys via .NET User Secrets (never in source code) |
-| **Auto DB Migration** | Database migrates automatically on app startup |
-
-### 🔜 In Progress (Phase 2)
-
-| Feature | Description |
-|---|---|
-| **Indicator Engine** | RSI, EMA20/50, MACD, ATR, Volume Spike calculation |
-| **Market Scanner** | Fetch and filter trading pairs with candle data |
-| **Strategy Engine** | Generate buy/sell signals from indicator combinations |
-| **Signal Worker** | Background job auto-converts signals to trades |
-
-### 📅 Planned (Phase 3+)
-
-| Feature | Description |
-|---|---|
-| **Gemini AI** | AI validates signals before trade execution |
-| **Market Regime** | Detect bull/bear/sideways market conditions |
-| **Performance Analytics** | Win rate, Sharpe ratio, daily PnL tracking |
-| **Multi-pair Scanning** | Scan multiple trading pairs simultaneously |
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| **Runtime** | .NET 10, C# |
-| **Database** | SQL Server (MSSQL) via Entity Framework Core 10 |
-| **Exchange** | Binance REST API (Testnet + Mainnet) |
-| **API** | ASP.NET Core Web API with Swagger |
-| **Background Jobs** | .NET Hosted Services (`BackgroundService`) |
-| **Secrets** | .NET User Secrets (local) / Environment Variables (production) |
-
----
-
-## Project Structure
+### Signal Pipeline (every 5 minutes)
 
 ```
-TradingBot/                          ← Main API project
-│
-├── Controllers/
-│   ├── TradeController.cs           ← Open/close trades
-│   ├── MarketController.cs          ← Price & candle data
-│   ├── PortfolioController.cs       ← Portfolio snapshots
-│   └── RiskController.cs            ← Risk profile management
-│
-├── Services/
-│   ├── RiskManagementService.cs     ← Risk rules enforcement
-│   └── PortfolioManager.cs          ← Balance snapshot logic
-│
-├── Workers/
-│   └── TradeMonitoringWorker.cs     ← SL/TP background monitor
-│
-├── appsettings.json                 ← Config (NO secrets here)
-└── Program.cs                       ← DI registration & startup
-
-TradingBot.Domain/                   ← Core business models
-├── Entities/
-│   ├── Trade.cs
-│   ├── Order.cs
-│   ├── TradeSignal.cs
-│   ├── PortfolioSnapshot.cs
-│   ├── RiskProfile.cs
-│   ├── IndicatorSnapshot.cs
-│   └── ...
-├── Interfaces/
-│   ├── ITradeExecutionService.cs
-│   ├── IMarketDataService.cs
-│   ├── IRiskManagementService.cs
-│   └── IIndicatorService.cs
-└── Enums/
-    ├── TradeStatus.cs
-    └── TradeAction.cs
-
-TradingBot.Infrastructure/           ← Binance integration
-└── Binance/
-    ├── BinanceTradeExecutionService.cs
-    ├── BinanceMarketDataService.cs
-    ├── BinanceAccountService.cs
-    ├── BinanceSignatureService.cs
-    └── Services/
-        └── TradeMonitoringService.cs
-
-TradingBot.Persistence/              ← Database layer
-├── TradingBotDbContext.cs
-├── Migrations/
-└── SeedData/
-    └── RiskProfileSeeder.cs
-
-TradingBot.Application/              ← Business logic (Phase 2)
-├── IndicatorCalculationService.cs   ← [in progress]
-└── MarketScannerService.cs          ← [in progress]
+ScanAllPairsAsync()
+  └─ For each active pair:
+        CalculateIndicatorsAsync()  →  IndicatorSnapshot (saved to DB)
+        EvaluateSignal()            →  Rule-based TradeSignal? (5-gate confluence)
+        GetLatestRegimeAsync()      →  Suppress BUY if Bearish / Volatile
+        ValidateSignalAsync()       →  AI confidence score (≥ 70 required)
+        OpenTradeAsync()            →  MARKET order → Trade saved to DB
 ```
 
 ---
 
-## Getting Started
+## 3. Project Structure
 
-### Prerequisites
+```
+TradingBot/                          ← Web API (startup, controllers, workers)
+├─ Controllers/
+│   ├─ AIController.cs
+│   ├─ IndicatorsController.cs
+│   ├─ MarketController.cs
+│   ├─ MarketScannerController.cs
+│   ├─ PerformanceController.cs
+│   ├─ PortfolioController.cs
+│   ├─ RiskController.cs
+│   ├─ StrategyController.cs
+│   ├─ SystemController.cs
+│   └─ TradeController.cs
+├─ Middleware/
+│   └─ GlobalExceptionHandler.cs    ← clean JSON errors + DB logging
+├─ Workers/
+│   ├─ DailyPerformanceWorker.cs
+│   ├─ SignalGenerationWorker.cs
+│   └─ TradeMonitoringWorker.cs
+├─ Services/
+│   ├─ PortfolioManager.cs
+│   └─ RiskManagementService.cs
+└─ Program.cs
 
-- [.NET 10 SDK](https://dotnet.microsoft.com/download)
-- [SQL Server](https://www.microsoft.com/en-us/sql-server) (or SQL Server Express)
-- [Binance Testnet Account](https://testnet.binance.vision/) — free, no real money
-- [EF Core CLI tools](https://learn.microsoft.com/en-us/ef/core/cli/dotnet)
-
-```bash
-dotnet tool install --global dotnet-ef
+TradingBot.Domain/                   ← Entities, interfaces, enums, models
+TradingBot.Application/              ← IndicatorCalculationService, StrategyEngine, MarketScannerService
+TradingBot.Infrastructure/           ← Binance clients, AI providers, Polly resilience
+TradingBot.Persistence/              ← DbContext, EF migrations, seeders
 ```
 
 ---
 
-### 1. Clone the repo
+## 4. Prerequisites & Setup
 
+### Requirements
+
+| Tool | Version | Notes |
+|------|---------|-------|
+| .NET SDK | 10.0+ | `dotnet --version` to verify |
+| SQL Server | 2019+ or Express | LocalDB works for dev |
+| EF Core CLI | Latest | `dotnet tool install -g dotnet-ef` |
+| Binance Account | Testnet recommended | [testnet.binance.vision](https://testnet.binance.vision) |
+
+### First-Time Setup
+
+**1. Clone and restore**
 ```bash
 git clone https://github.com/Mukarram990/TradingBot.git
 cd TradingBot
+dotnet restore
 ```
 
----
-
-### 2. Configure the database connection
-
-Open `TradingBot/appsettings.json` and update the connection string to match your SQL Server instance:
-
+**2. Update the database connection in `TradingBot/appsettings.json`**
 ```json
 {
   "ConnectionStrings": {
-    "DefaultConnection": "Server=localhost\\MSSQLSERVER01;Database=TradingBotDb;Trusted_Connection=True;TrustServerCertificate=TRUE;"
+    "DefaultConnection": "Server=localhost\\SQLEXPRESS;Database=TradingBotDb;Trusted_Connection=True;TrustServerCertificate=True;"
+  }
+}
+```
+
+**3. Set all secrets** (see [Section 5](#5-configuration--secrets))
+
+**4. Run migrations — creates all tables and seeds default data**
+```bash
+dotnet ef database update -p TradingBot.Persistence -s TradingBot
+```
+
+**5. Build and run**
+```bash
+dotnet run --project TradingBot
+```
+
+On every startup the app automatically: applies any pending migrations, seeds the RiskProfile, seeds 5 default trading pairs, and creates today's portfolio baseline snapshot.
+
+---
+
+## 5. Configuration & Secrets
+
+> **Never put API keys in `appsettings.json`.** Use .NET User Secrets locally and environment variables in production.
+
+### Initialize secrets (one time only)
+```bash
+cd TradingBot
+dotnet user-secrets init
+```
+
+### Binance
+```bash
+dotnet user-secrets set "Binance:ApiKey"    "your-testnet-api-key"
+dotnet user-secrets set "Binance:ApiSecret" "your-testnet-secret"
+```
+
+### AI Providers (configure at least one — Gemini is recommended)
+```bash
+# Google Gemini — https://aistudio.google.com/apikey  (free, no CC)
+dotnet user-secrets set "AI:GeminiApiKey" "AIza..."
+
+# Groq — https://console.groq.com/keys  (free, no CC)
+dotnet user-secrets set "AI:GroqApiKey" "gsk_..."
+
+# OpenRouter — https://openrouter.ai/keys  (free :free models)
+dotnet user-secrets set "AI:OpenRouterApiKey" "sk-or-..."
+
+# Cohere — https://dashboard.cohere.com/api-keys  (1k req/month free)
+dotnet user-secrets set "AI:CohereApiKey" "..."
+```
+
+### Authentication
+```bash
+dotnet user-secrets set "Jwt:SecretKey"  "your-strong-secret-minimum-32-characters"
+dotnet user-secrets set "Auth:ApiKey"    "your-admin-api-key"
+```
+
+### Production — environment variables
+```bash
+# Use double-underscore as the section separator
+Binance__ApiKey=...
+Binance__ApiSecret=...
+AI__GeminiApiKey=...
+Jwt__SecretKey=...
+Auth__ApiKey=...
+```
+
+### `appsettings.json` — safe non-secret defaults
+```json
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "Server=localhost\\SQLEXPRESS;Database=TradingBotDb;Trusted_Connection=True;TrustServerCertificate=True;"
   },
   "Binance": {
-    "BaseUrl": "https://demo-api.binance.com"
+    "BaseUrl": "https://testnet.binance.vision"
+  },
+  "AI": {
+    "GeminiModel":             "gemini-2.0-flash",
+    "GroqModel":               "llama-3.1-70b-versatile",
+    "OpenRouterModel":         "meta-llama/llama-3.1-8b-instruct:free",
+    "CohereModel":             "command-r",
+    "RateLimitBackoffSeconds": 90,
+    "MinConfidenceToTrade":    70,
+    "ProviderPriority":        ["Gemini", "Groq", "OpenRouter", "Cohere"]
+  },
+  "Cors": {
+    "AllowedOrigin": "http://localhost:3000"
   }
 }
 ```
 
 ---
 
-### 3. Set your Binance API keys (User Secrets)
-
-**Never put API keys in `appsettings.json`.** Use .NET User Secrets instead:
+## 6. Running the Application
 
 ```bash
-cd TradingBot
-
-dotnet user-secrets init
-
-dotnet user-secrets set "Binance:ApiKey"    "your-testnet-api-key"
-dotnet user-secrets set "Binance:ApiSecret" "your-testnet-api-secret"
-
-# Verify
-dotnet user-secrets list
-```
-
-> For production deployments, use environment variables:
-> ```bash
-> $env:Binance__ApiKey    = "your-key"
-> $env:Binance__ApiSecret = "your-secret"
-> ```
-
----
-
-### 4. Run the application
-
-```bash
-cd ..   # back to solution root
+# Development
 dotnet run --project TradingBot
+
+# Watch mode (auto-restarts on code change)
+dotnet watch --project TradingBot run
+
+# Production build
+dotnet publish TradingBot -c Release -o ./publish
+./publish/TradingBot
 ```
 
-The app will automatically:
-- Run all pending database migrations
-- Seed a default `RiskProfile` (2% risk, 5% daily loss limit, 5 trades/day)
-- Create today's portfolio baseline snapshot
-- Start the SL/TP background monitoring worker
+**Expected startup output:**
+```
+[INF] Database migrations applied
+[INF] RiskProfile seeded
+[INF] TradingPairs seeded (5 pairs)
+[INF] Portfolio baseline snapshot created for 2026-03-04
+[INF] TradeMonitoringWorker started
+[INF] SignalGenerationWorker started (first scan in 30s, then every 5 min)
+[INF] DailyPerformanceWorker started
+[INF] Now listening on: http://localhost:5000
+```
 
----
-
-### 5. Open Swagger UI
-
-Navigate to: **http://localhost:5000/swagger**
-
-You'll see all available endpoints ready to test.
-
----
-
-## API Reference
-
-### Trade Management
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/trade/open` | Open a new trade on Binance |
-| `POST` | `/api/trade/close/{tradeId}` | Close an open trade |
-
-**Open Trade — Request Body:**
+**Quick health check:**
+```bash
+curl http://localhost:5000/api/system/health
+```
 ```json
 {
-  "symbol": "BTCUSDT",
-  "action": 1,
-  "entryPrice": 43250.50,
-  "stopLoss": 42900.00,
-  "takeProfit": 43800.00,
-  "quantity": 0.001,
+  "status": "healthy",
+  "uptimeFormatted": "0h 0m 12s",
+  "components": {
+    "database":    { "status": "connected" },
+    "signalWorker":{ "status": "active (last 5 min)" },
+    "tradeMonitor":{ "status": "active (last 5 min)" }
+  }
+}
+```
+
+---
+
+## 7. Complete API Reference
+
+All responses are JSON. All timestamps are UTC ISO 8601. All list endpoints return the standard pagination wrapper: `{ totalCount, page, pageSize, totalPages, data[] }`.
+
+---
+
+### 🔐 Authentication
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/api/auth/token` | None | Exchange admin API key for JWT |
+
+**Request:**
+```json
+{ "apiKey": "your-admin-api-key" }
+```
+**Response:**
+```json
+{ "token": "eyJ...", "expiresAt": "2026-03-05T00:00:00Z" }
+```
+
+All `POST` and `PUT` operations require `Authorization: Bearer <token>`.  
+All `GET` operations are public — safe for dashboard polling without auth.
+
+---
+
+### 📈 Trades
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/trades` | Public | Paginated trade list with filters |
+| `GET` | `/api/trades/open` | Public | All currently open positions |
+| `GET` | `/api/trades/summary` | Public | Aggregated counts + PnL totals |
+| `GET` | `/api/trades/{id}` | Public | Single trade with linked orders |
+| `GET` | `/api/trades/by-symbol/{symbol}` | Public | All trades for one pair |
+| `POST` | `/api/trade/open` | 🔒 JWT | Manually open a trade via Binance |
+| `POST` | `/api/trade/close/{id}` | 🔒 JWT | Manually close an open trade |
+
+**GET /api/trades — query params:**
+```
+?status=2          1=Pending 2=Open 3=Closed 4=Cancelled 5=Failed
+?symbol=BTCUSDT
+?fromDate=2026-01-01
+?toDate=2026-03-04
+?page=1
+?pageSize=20       max 100
+?sortBy=entryTime  entryTime | pnl | symbol
+?desc=true
+```
+
+**POST /api/trade/open — request body:**
+```json
+{
+  "symbol":       "BTCUSDT",
+  "action":       1,
+  "entryPrice":   65000.00,
+  "stopLoss":     63000.00,
+  "takeProfit":   69000.00,
   "aiConfidence": 85
 }
 ```
 
-> `quantity` is automatically recalculated by the 2% position sizing rule. Your provided value is overridden.
-
 ---
 
-### Market Data
+### 🏦 Portfolio
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/market/price/{symbol}` | Get current price for a symbol |
-| `GET` | `/api/market/candles?symbol=BTCUSDT&interval=1h&limit=100` | Get OHLCV candle data |
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/portfolio/balance` | Public | Live balance from Binance including today's PnL |
+| `GET` | `/api/portfolio/holdings` | Public | Open positions with live unrealized PnL |
+| `GET` | `/api/portfolio/snapshots` | Public | Paginated historical snapshot list |
+| `GET` | `/api/portfolio/snapshots/today` | Public | Today's opening baseline snapshot |
+| `POST` | `/api/portfolio/snapshot` | 🔒 JWT | Create a new snapshot manually |
 
----
-
-### Portfolio
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/portfolio/snapshot` | Create a portfolio balance snapshot |
-
----
-
-### Risk Management
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/risk/profile` | View current risk settings |
-| `PUT` | `/api/risk/profile` | Update risk settings at runtime |
-
-**Update Risk Profile — Request Body:**
+**GET /api/portfolio/balance — sample response:**
 ```json
 {
+  "totalUsdtValue": 10245.50,
+  "todayPnL": 245.50,
+  "todayPnLPercent": 2.45,
+  "baselineBalance": 10000.00,
+  "assets": [
+    { "asset": "USDT", "free": 9800.00, "locked": 0, "total": 9800.00, "usdtValue": 9800.00 },
+    { "asset": "BTC",  "free": 0.007,   "locked": 0, "total": 0.007,  "usdtValue": 445.50  }
+  ],
+  "fetchedAt": "2026-03-04T10:30:00Z"
+}
+```
+
+**GET /api/portfolio/holdings — sample response:**
+```json
+{
+  "totalOpenPositions": 1,
+  "totalUnrealizedPnL": 32.50,
+  "holdings": [
+    {
+      "tradeId": 42,
+      "symbol": "BTCUSDT",
+      "quantity": 0.005,
+      "entryPrice": 63500.00,
+      "currentPrice": 64150.00,
+      "stopLoss": 62000.00,
+      "takeProfit": 67000.00,
+      "unrealizedPnL": 32.50,
+      "unrealizedPnLPercent": 1.02,
+      "aiConfidence": 82,
+      "entryTime": "2026-03-04T08:15:00Z"
+    }
+  ]
+}
+```
+
+---
+
+### 📊 Market Data
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/market/price/{symbol}` | Public | Live price for one pair |
+| `GET` | `/api/market/prices?symbols=A,B,C` | Public | Live prices for multiple pairs in one call |
+| `GET` | `/api/market/candles` | Public | OHLCV candles (from Binance, not stored) |
+| `GET` | `/api/market/pairs` | Public | All trading pairs in DB (paginated) |
+| `GET` | `/api/market/pairs/active` | Public | Active pairs only (shorthand) |
+| `GET` | `/api/market/statistics/{symbol}` | Public | 24h stats for a symbol |
+| `GET` | `/api/market/indicators/{symbol}` | Public | Latest saved indicator snapshot |
+
+**GET /api/market/candles — query params:**
+```
+?symbol=BTCUSDT    required
+?interval=1h       1m 5m 15m 30m 1h 4h 1d  (default: 1h)
+?limit=100         max 1000
+```
+
+---
+
+### 🤖 Indicators
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/api/indicators/{symbol}/calculate` | 🔒 JWT | Fetch candles + run all 7 indicators + save snapshot |
+| `GET` | `/api/indicators/{symbol}/latest` | Public | Most recent saved snapshot from DB |
+| `GET` | `/api/indicators/{symbol}/history` | Public | Last N saved snapshots |
+
+**POST query params:**
+```
+?interval=1h
+?candleCount=100   min 50
+```
+
+**Indicator snapshot shape:**
+```json
+{
+  "id": 101,
+  "symbol": "BTCUSDT",
+  "timestamp": "2026-03-04T10:00:00Z",
+  "rsi": 42.3,
+  "ema20": 64200.00,
+  "ema50": 63100.00,
+  "macd": 312.50,
+  "atr": 820.00,
+  "volumeSpike": true,
+  "trend": "Uptrend",
+  "supportLevel": 62500.00,
+  "resistanceLevel": 66000.00
+}
+```
+
+---
+
+### 🧠 Strategy & Signals
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/api/strategy/evaluate/{symbol}` | 🔒 JWT | Full pipeline: scan → indicators → AI → signal or null |
+| `POST` | `/api/strategy/scan-and-evaluate-all` | 🔒 JWT | Evaluate all active pairs in one call |
+| `GET` | `/api/strategy/signals` | Public | Recent generated signals (all pairs) |
+| `GET` | `/api/strategy/signals/{symbol}` | Public | Recent signals for one pair |
+
+**GET /api/strategy/signals — query params:**
+```
+?symbol=BTCUSDT   optional filter
+?count=20         default 20
+```
+
+---
+
+### 🔍 Market Scanner
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/scanner/pairs` | Public | Active pairs the scanner watches |
+| `POST` | `/api/scanner/scan/{symbol}` | 🔒 JWT | Scan single pair on demand |
+| `POST` | `/api/scanner/scan-all` | 🔒 JWT | Scan all active pairs now |
+| `POST` | `/api/scanner/pairs/{symbol}/activate` | 🔒 JWT | Add or re-enable a pair |
+| `POST` | `/api/scanner/pairs/{symbol}/deactivate` | 🔒 JWT | Disable a pair |
+
+---
+
+### 🤖 AI Intelligence
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/ai/status` | Public | Provider health + cooldown timers |
+| `GET` | `/api/ai/responses` | Public | Paginated AI decision history |
+| `GET` | `/api/ai/responses/latest` | Public | Latest AI decision per symbol |
+| `POST` | `/api/ai/validate/{symbol}` | 🔒 JWT | Manually trigger AI validation |
+| `GET` | `/api/ai/regimes` | Public | Current market regime per pair |
+| `POST` | `/api/ai/regime/{symbol}` | 🔒 JWT | Re-detect regime for a symbol |
+
+**GET /api/ai/status — sample response:**
+```json
+{
+  "providers": [
+    { "name": "Gemini",     "status": "ready",    "cooldownRemainingSeconds": 0  },
+    { "name": "Groq",       "status": "cooldown", "cooldownRemainingSeconds": 45 },
+    { "name": "OpenRouter", "status": "ready",    "cooldownRemainingSeconds": 0  },
+    { "name": "Cohere",     "status": "ready",    "cooldownRemainingSeconds": 0  }
+  ],
+  "checkedAt": "2026-03-04T10:30:00Z"
+}
+```
+
+---
+
+### 📉 Performance
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/performance/daily` | Public | Daily records with optional date-range filter |
+| `GET` | `/api/performance/summary` | Public | Aggregated stats for a period |
+| `GET` | `/api/performance/statistics` | Public | Breakdown by symbol, hour-of-day, day-of-week |
+| `POST` | `/api/performance/calculate` | 🔒 JWT | Recalculate and upsert a specific day |
+
+**GET /api/performance/summary — query params:**
+```
+?period=all     all | month | week | today
+```
+
+**Sample summary response:**
+```json
+{
+  "period": "all",
+  "totalTrades": 87,
+  "wins": 54,
+  "losses": 33,
+  "winRate": 62.07,
+  "netPnL": 1245.80,
+  "avgPnLPerTrade": 14.32,
+  "avgWinSize": 42.10,
+  "avgLossSize": -18.60,
+  "profitFactor": 2.27,
+  "maxDrawdown": -210.00,
+  "bestTrade": 312.50,
+  "worstTrade": -89.40,
+  "consecutiveWins": 8,
+  "consecutiveLosses": 3,
+  "calculatedAt": "2026-03-04T10:30:00Z"
+}
+```
+
+**GET /api/performance/daily — query params:**
+```
+?fromDate=2026-01-01
+?toDate=2026-03-04
+?page=1
+?pageSize=30    max 90
+```
+
+---
+
+### ⚙️ Risk Management
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/risk/profile` | Public | Current risk configuration |
+| `PUT` | `/api/risk/profile` | 🔒 JWT | Update risk configuration live (no restart needed) |
+
+**Risk profile shape:**
+```json
+{
+  "id": 1,
   "maxRiskPerTradePercent": 0.02,
   "maxDailyLossPercent": 0.05,
   "maxTradesPerDay": 5,
@@ -322,116 +580,364 @@ You'll see all available endpoints ready to test.
 
 ---
 
-## Configuration
+### 🖥️ System & Monitoring
 
-### Risk Rules (all configurable via API)
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/system/health` | Public | App health + DB + worker status |
+| `GET` | `/api/system/worker-status` | Public | Last activity timestamps for each worker |
+| `GET` | `/api/system/database-stats` | Public | Row counts for every table |
+| `GET` | `/api/system/logs` | Public | Paginated system log entries |
+| `GET` | `/api/system/logs/errors` | Public | Latest ERROR-level entries (last 100) |
+| `GET` | `/api/system/logs/{id}` | Public | Full single log entry with stack trace |
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `MaxRiskPerTradePercent` | `0.02` (2%) | Max portfolio % risked per trade |
-| `MaxDailyLossPercent` | `0.05` (5%) | Trading halts if daily loss exceeds this |
-| `MaxTradesPerDay` | `5` | Max number of trades opened per day |
-| `CircuitBreakerLossCount` | `3` | Trading halts after N consecutive losses |
-
-### Background Worker
-
-The `TradeMonitoringWorker` runs every **10 seconds** and:
-1. Fetches all trades with `Status = Open`
-2. Gets the current Binance price for each
-3. Compares against `StopLoss` and `TakeProfit`
-4. Auto-closes the trade and logs the event if triggered
-
----
-
-## Roadmap
-
+**GET /api/system/logs — query params:**
 ```
-Phase 1: Foundation ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ✅ COMPLETE
-  ✔ Binance API integration (trade, market, account)
-  ✔ Full trade lifecycle (open → monitor → auto-close)
-  ✔ Risk management (position sizing, daily limits, circuit breaker)
-  ✔ Secure credential management
-  ✔ DB auto-migration & seeding
-
-Phase 2: Automation ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 🔨 NEXT
-  ☐ IndicatorCalculationService (RSI, EMA, MACD, ATR)
-  ☐ MarketScannerService (fetch & filter pairs)
-  ☐ StrategyEngine (generate TradeSignals from indicators)
-  ☐ SignalWorker (auto-convert high-confidence signals → trades)
-  ☐ IndicatorSnapshot persistence
-
-Phase 3: Intelligence ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 📅 PLANNED
-  ☐ Gemini AI signal validation
-  ☐ Market regime detection (bull / bear / sideways)
-  ☐ Multi-pair scanning
-  ☐ Performance analytics (win rate, Sharpe ratio, daily PnL)
-
-Phase 4: Production Hardening ━━━━━━━━━━━━━━━━━━━━━━━━━━ 📅 PLANNED
-  ☐ Retry policies & rate limit handling
-  ☐ Health check endpoints
-  ☐ Structured logging & audit trails
-  ☐ Load testing & performance tuning
+?level=ERROR      INFO | WARN | ERROR
+?search=BTCUSDT   search within message text
+?page=1
+?pageSize=50      max 200
 ```
 
 ---
 
-## Development Progress
+## 8. Response Shapes & Enums
 
-| Component | Status | Notes |
-|---|---|---|
-| Binance Trade Execution | ✅ Done | MARKET orders, fills, rollback |
-| Binance Market Data | ✅ Done | Price, OHLCV candles |
-| Binance Account | ✅ Done | Balance fetching |
-| Trade Lifecycle | ✅ Done | Open, monitor, close |
-| Position Sizing | ✅ Done | 2% risk rule |
-| Daily Loss Limit | ✅ Done | Portfolio snapshot baseline |
-| SL/TP Auto-Close | ✅ Done | Background worker, 10s interval |
-| Risk Profile API | ✅ Done | GET/PUT, DB-backed |
-| DB Schema | ✅ Done | int IDENTITY, all tables |
-| Secure Secrets | ✅ Done | User Secrets / env vars |
-| Indicator Calculation | 🔨 Next | RSI, EMA, MACD, ATR |
-| Market Scanner | 🔨 Next | Pair filtering, candle pull |
-| Strategy Engine | 🔨 Next | Signal generation |
-| Signal → Trade Worker | 🔨 Next | Auto-trading loop |
-| Gemini AI Integration | 📅 Planned | Signal validation |
-| Performance Analytics | 📅 Planned | Win rate, Sharpe ratio |
+### TradeStatus (int)
+| Value | Name |
+|-------|------|
+| 1 | Pending |
+| 2 | Open |
+| 3 | Closed |
+| 4 | Cancelled |
+| 5 | Failed |
+
+### TradeAction (int)
+| Value | Name |
+|-------|------|
+| 1 | Buy |
+| 2 | Sell |
+| 3 | Hold |
+
+### MarketRegime (string)
+`"Trending"` · `"Ranging"` · `"Bearish"` · `"Volatile"`
+
+### Trade object
+```json
+{
+  "id": 42,
+  "symbol": "BTCUSDT",
+  "entryPrice": 63500.00,
+  "exitPrice": 65200.00,
+  "quantity": 0.005,
+  "stopLoss": 62000.00,
+  "takeProfit": 67000.00,
+  "pnL": 8.50,
+  "pnLPercentage": 2.68,
+  "status": 3,
+  "entryTime": "2026-03-04T08:15:00Z",
+  "exitTime": "2026-03-04T14:30:00Z",
+  "aiConfidence": 82,
+  "orders": []
+}
+```
+
+### Order object
+```json
+{
+  "id": 91,
+  "tradeId": 42,
+  "externalOrderId": "3847261958",
+  "symbol": "BTCUSDT",
+  "side": "BUY",
+  "type": "MARKET",
+  "quantity": 0.005,
+  "executedPrice": 63512.40,
+  "status": 3,
+  "createdAt": "2026-03-04T08:15:02Z"
+}
+```
+
+### DailyPerformance object
+```json
+{
+  "id": 12,
+  "date": "2026-03-04T00:00:00Z",
+  "totalTrades": 4,
+  "wins": 3,
+  "losses": 1,
+  "winRate": 75.00,
+  "netPnL": 124.30,
+  "maxDrawdown": 18.20
+}
+```
 
 ---
 
-## Common Commands
+## 9. Error Handling
 
+No raw stack traces are ever exposed. All errors return a consistent envelope:
+
+**HTTP 400 — Domain / validation error:**
+```json
+{
+  "error": "Bad Request",
+  "message": "Daily loss limit exceeded. Trading halted.",
+  "requestId": "0HN2VQK7L...",
+  "timestamp": "2026-03-04T10:30:00Z"
+}
+```
+
+**HTTP 401 — Missing or invalid JWT:**
+```json
+{ "error": "Unauthorized" }
+```
+
+**HTTP 429 — Rate limit exceeded:**
+```json
+{ "error": "Too Many Requests" }
+```
+
+**HTTP 500 — Unexpected server error:**
+```json
+{
+  "error": "Internal Server Error",
+  "message": "An unexpected error occurred. See server logs for details.",
+  "requestId": "0HN2VQK7L...",
+  "timestamp": "2026-03-04T10:30:00Z"
+}
+```
+
+Every 500 error is automatically persisted to the `SystemLogs` table and queryable via `GET /api/system/logs/errors`.
+
+---
+
+## 10. Rate Limiting & Security
+
+### Rate Limiting
+- Sliding window: **60 requests / 60 seconds per IP**
+- Queue: up to 10 requests buffered, oldest served first
+- Exceeding the limit: HTTP 429
+- Applied to every controller route via `.RequireRateLimiting("global")`
+
+### Authentication (JWT)
+- Mechanism: JWT Bearer token (HS256)
+- Obtain: `POST /api/auth/token` with your admin API key
+- Header: `Authorization: Bearer <token>`
+- **Protected:** All `POST` and `PUT` endpoints
+- **Public:** All `GET` endpoints — safe for unauthenticated dashboard polling
+
+### Binance HTTP Resilience (Polly)
+- **Retry:** 3 attempts, exponential backoff (1s → 2s → 4s + jitter)
+- **Circuit breaker:** Opens at 50% failure rate over 30s, resets after 15s
+- **Never retried:** HTTP 400, 401, 403
+
+### AI Provider Resilience
+- **Per-provider retry:** 2 attempts on network errors only
+- **Rate-limit (429) handling:** 90-second in-memory cooldown per provider, automatic rotation to next
+- **Fallback chain:** Gemini → Groq → OpenRouter → Cohere → skip trade (never crashes the worker)
+
+### Credentials
+- All API keys in .NET User Secrets locally, environment variables in production
+- Nothing sensitive in `appsettings.json` or source control
+
+---
+
+## 11. Background Workers
+
+| Worker | Interval | Responsibility |
+|--------|----------|---------------|
+| `TradeMonitoringWorker` | Every **10 seconds** | Fetches live prices for all open trades; auto-closes on SL or TP hit |
+| `SignalGenerationWorker` | Every **5 minutes** | Full pipeline: scan → indicators → strategy → AI → Binance order |
+| `DailyPerformanceWorker` | **Midnight UTC** + startup back-fill | Calculates and upserts `DailyPerformance` record for the previous day |
+
+Monitor status in real time:
 ```bash
-# Build
-dotnet build
+GET /api/system/worker-status   # last-seen timestamps + running/unknown for each worker
+GET /api/system/health          # quick active/idle signal
+```
 
-# Run
+---
+
+## 12. Database Schema Overview
+
+| Table | Purpose |
+|-------|---------|
+| `Trades` | Core trade lifecycle: Open → Closed |
+| `Orders` | Individual Binance fills linked to a Trade |
+| `TradingPairs` | Pairs the scanner is configured to watch |
+| `IndicatorSnapshots` | Saved technical indicator results per symbol per tick |
+| `TradeSignals` | Generated signals with rule-based confidence scores |
+| `AIResponses` | Full AI provider responses: action, confidence, reasoning, model used |
+| `MarketRegimes` | AI-classified market conditions per pair |
+| `PortfolioSnapshots` | Daily USDT balance baselines |
+| `DailyPerformances` | Aggregated PnL, win rate, drawdown per calendar day |
+| `RiskProfile` | Configurable risk parameters |
+| `SystemLogs` | Application logs written by workers and exception handler |
+| `Strategy` | Strategy metadata (future use) |
+| `UserAccount` | Account management (future use) |
+
+**Key schema decisions:**
+- All monetary / price columns: `decimal(18,8)` — correct precision for crypto
+- All IDs: `int IDENTITY(1,1)` auto-increment
+- All timestamps: `datetime2` UTC
+- Indexes on: `Trades(Symbol)`, `Orders(TradeId)`, `TradingPairs(Symbol)` unique, `IndicatorSnapshots(Symbol, Timestamp)`, `TradeSignals(Symbol, CreatedAt)`, `DailyPerformances(Date)` unique
+
+---
+
+## 13. Frontend Integration Guide
+
+### Recommended Dashboard Pages
+
+| Page | Primary Endpoints |
+|------|------------------|
+| **Overview / Home** | `GET /api/system/health`, `GET /api/portfolio/balance`, `GET /api/trades/open`, `GET /api/performance/summary?period=today` |
+| **Live Positions** | `GET /api/portfolio/holdings` (poll every 15s) |
+| **Trade History** | `GET /api/trades?status=3&page=1` |
+| **Market & Indicators** | `GET /api/market/prices?symbols=BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT`, `GET /api/indicators/{symbol}/latest` |
+| **Performance Analytics** | `GET /api/performance/summary`, `GET /api/performance/daily`, `GET /api/performance/statistics` |
+| **AI Dashboard** | `GET /api/ai/status`, `GET /api/ai/responses`, `GET /api/ai/regimes` |
+| **Signals Feed** | `GET /api/strategy/signals` (poll every 30s) |
+| **System Monitor** | `GET /api/system/worker-status`, `GET /api/system/logs/errors`, `GET /api/system/database-stats` |
+| **Risk Settings** | `GET /api/risk/profile`, `PUT /api/risk/profile` |
+
+### Suggested Polling Intervals
+
+| Data | Interval | Endpoint |
+|------|----------|----------|
+| Open positions + unrealized PnL | 15 s | `GET /api/portfolio/holdings` |
+| Ticker prices | 10 s | `GET /api/market/prices?symbols=...` |
+| Worker health | 60 s | `GET /api/system/worker-status` |
+| AI provider status | 30 s | `GET /api/ai/status` |
+| Latest signals | 60 s | `GET /api/strategy/signals` |
+| System health badge | 30 s | `GET /api/system/health` |
+| Trade history / performance | On demand | various |
+
+### CORS
+Configured for `http://localhost:3000` by default. To change:
+```json
+// appsettings.json
+"Cors": { "AllowedOrigin": "https://your-dashboard.com" }
+```
+
+### Authentication Flow
+```
+1. Login screen → POST /api/auth/token  { "apiKey": "..." }
+2. Store JWT in memory (avoid localStorage — XSS risk)
+3. Attach to every mutating request: Authorization: Bearer <token>
+4. On 401 response → redirect to login
+5. Check expiresAt and refresh before expiry
+```
+
+### TypeScript API Client (quick start)
+```typescript
+const BASE_URL = 'http://localhost:5000';
+
+let _token: string | null = null;
+
+export function setToken(token: string) { _token = token; }
+
+export async function api<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...(_token ? { Authorization: `Bearer ${_token}` } : {}),
+    },
+    ...options,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as any).message ?? `HTTP ${res.status}`);
+  }
+
+  return res.json() as Promise<T>;
+}
+
+// Usage examples
+const health    = await api('/api/system/health');
+const holdings  = await api('/api/portfolio/holdings');
+const trades    = await api('/api/trades?status=3&page=1&pageSize=20');
+const summary   = await api('/api/performance/summary?period=month');
+const aiStatus  = await api('/api/ai/status');
+
+// Authenticated mutation
+const token = await api<{ token: string }>('/api/auth/token', {
+  method: 'POST',
+  body: JSON.stringify({ apiKey: 'your-key' }),
+});
+setToken(token.token);
+
+await api('/api/trade/close/42', { method: 'POST' });
+```
+
+---
+
+## 14. Development Notes
+
+### Switching Binance Testnet ↔ Live
+```bash
+# Testnet (default — fake money, safe for testing)
+# appsettings.json: "BaseUrl": "https://testnet.binance.vision"
+dotnet user-secrets set "Binance:ApiKey" "testnet-api-key"
+
+# Live trading (real money — only after thorough paper trading)
+# appsettings.json: "BaseUrl": "https://api.binance.com"
+dotnet user-secrets set "Binance:ApiKey" "live-api-key"
+```
+
+### Adding a New Trading Pair
+```bash
+# Via API (no restart needed)
+POST /api/scanner/pairs/ADAUSDT/activate
+```
+
+### Changing Risk Parameters Live
+```bash
+# No code change or restart required
+PUT /api/risk/profile
+{
+  "maxRiskPerTradePercent": 0.01,
+  "maxDailyLossPercent": 0.03,
+  "maxTradesPerDay": 3,
+  "circuitBreakerLossCount": 2,
+  "isEnabled": true
+}
+```
+
+### Viewing Logs
+```bash
+# Console output (all levels)
 dotnet run --project TradingBot
 
-# Create migration
-dotnet ef migrations add <MigrationName> -p TradingBot.Persistence -s TradingBot
+# Daily rolling file
+cat logs/tradingbot-20260304.log
 
-# Apply migrations
-dotnet ef database update -p TradingBot.Persistence -s TradingBot
+# Database — errors only
+GET /api/system/logs/errors
 
-# Drop database (for fresh start)
-dotnet ef database drop -p TradingBot.Persistence -s TradingBot
-
-# List migrations
-dotnet ef migrations list -p TradingBot.Persistence -s TradingBot
-
-# View secrets
-cd TradingBot && dotnet user-secrets list
+# Database — searchable, all levels
+GET /api/system/logs?level=ERROR&search=BTCUSDT
 ```
 
----
+### Database Migrations
+```bash
+# Apply all pending migrations
+dotnet ef database update -p TradingBot.Persistence -s TradingBot
 
-## Security Notes
+# Create a new migration after entity changes
+dotnet ef migrations add YourMigrationName -p TradingBot.Persistence -s TradingBot
 
-- ❌ **Never commit API keys** — they belong in User Secrets or environment variables only
-- ✅ `appsettings.json` contains only non-sensitive config (`BaseUrl`, connection string for local dev)
-- ✅ All secrets are loaded at runtime via .NET's configuration pipeline
-- ✅ `.gitignore` excludes `secrets.json` and `.env` files
+# Roll back one migration
+dotnet ef database update PreviousMigrationName -p TradingBot.Persistence -s TradingBot
+```
 
----
+### Verify Worker Health
+```bash
+curl http://localhost:5000/api/system/worker-status
+# All 3 workers should show status "running"
+```
 
-*Built with .NET 10 · Binance API · SQL Server · Entity Framework Core*
+### Default Seeded Trading Pairs
+On first startup the system seeds: `BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `SOLUSDT`, `XRPUSDT`.  
+Add or remove pairs at runtime via `POST /api/scanner/pairs/{symbol}/activate` and `/deactivate`.
