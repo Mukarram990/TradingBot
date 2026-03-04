@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using TradingBot.Persistence;
 
@@ -11,9 +12,11 @@ using TradingBot.Persistence;
 namespace TradingBot.Persistence.Migrations
 {
     [DbContext(typeof(TradingBotDbContext))]
-    partial class TradingBotDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260304150106_AddApiKeyAuthentication")]
+    partial class AddApiKeyAuthentication
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

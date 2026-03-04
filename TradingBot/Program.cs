@@ -84,6 +84,30 @@ builder.Services.AddRateLimiter(options =>
     options.RejectionStatusCode = 429;
 });
 
+// ── CORS (Enable frontend dashboard) ──────────────────────────────────────────
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowFrontend", policy =>
+    {
+        if (builder.Environment.IsDevelopment())
+        {
+            // Development: Allow localhost on any port
+            policy.AllowAnyOrigin()
+                  .AllowAnyHeader()
+                  .AllowAnyMethod();
+        }
+        else
+        {
+            // Production: Restrict to specific domain(s)
+            // Update these with your actual frontend domain(s)
+            policy.WithOrigins("https://yourdomain.com", "https://app.yourdomain.com")
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials();
+        }
+    });
+});
+
 // ── API ───────────────────────────────────────────────────────────────────────
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -95,13 +119,45 @@ builder.Services.AddSwaggerGen(c =>
         Version = "v1",
         Description = "Automated crypto trading bot - Phase 4: Production Hardened"
     });
+
+    // Swagger documentation for API Key auth
+    c.AddSecurityDefinition("ApiKey", new OpenApiSecurityScheme
+    {
+        Type = SecuritySchemeType.ApiKey,
+        In = ParameterLocation.Header,
+        Name = "Authorization",
+        Description = "API Key authentication. Format: ApiKey {key}"
+    });
+
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "ApiKey" }
+            },
+            Array.Empty<string>()
+        }
+    });
 });
 
 var app = builder.Build();
 
+// ── HTTPS Redirect (Production Security) ──────────────────────────────────────
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
+
 // ── Phase 4 middleware (before routing) ───────────────────────────────────────
 // Clean JSON error responses + auto-logs every exception to SystemLogs table
 app.UseExceptionHandler(GlobalExceptionHandler.Handle);
+
+// API Key Authentication middleware
+app.UseMiddleware<ApiKeyAuthenticationMiddleware>();
+
+// CORS
+app.UseCors("AllowFrontend");
 
 // Rate limiter
 app.UseRateLimiter();

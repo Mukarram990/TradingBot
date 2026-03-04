@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using TradingBot.Application;
 using TradingBot.Domain.Entities;
 using TradingBot.Domain.Enums;
 using TradingBot.Persistence;
@@ -11,6 +12,7 @@ namespace TradingBot.API.Controllers
     ///
     ///   GET  /api/performance/daily        — daily records with date-range filter
     ///   GET  /api/performance/summary      — all-time aggregated stats
+    ///   GET  /api/performance/analyze      — detailed metrics with Sharpe ratio, max drawdown, etc. (configurable date range)
     ///   GET  /api/performance/statistics   — breakdown by symbol, by hour-of-day
     ///   POST /api/performance/calculate    — (re)compute today's DailyPerformance record
     /// </summary>
@@ -56,6 +58,43 @@ namespace TradingBot.API.Controllers
                 pageSize,
                 totalPages = (int)Math.Ceiling(totalCount / (double)pageSize),
                 data = records
+            });
+        }
+
+        /// <summary>
+        /// Detailed performance analysis with Sharpe ratio, max drawdown, etc.
+        /// Query params:
+        ///   fromDate — start date (default: 30 days ago)
+        ///   toDate   — end date (default: today)
+        /// </summary>
+        [HttpGet("analyze")]
+        public async Task<IActionResult> AnalyzePerformance(
+            [FromQuery] DateTime? fromDate = null,
+            [FromQuery] DateTime? toDate = null)
+        {
+            // Default: last 30 days
+            fromDate ??= DateTime.UtcNow.Date.AddDays(-30);
+            toDate ??= DateTime.UtcNow.Date.AddDays(1);
+
+            var trades = await _db.Trades!
+                .AsNoTracking()
+                .Where(t => t.EntryTime >= fromDate && t.EntryTime <= toDate)
+                .ToListAsync();
+
+            if (trades.Count == 0)
+                return Ok(new
+                {
+                    period = $"{fromDate:yyyy-MM-dd} to {toDate:yyyy-MM-dd}",
+                    message = "No trades found in this period.",
+                    totalTrades = 0
+                });
+
+            var metrics = PerformanceAnalyzer.Analyze(trades, fromDate, toDate);
+
+            return Ok(new
+            {
+                period = $"{fromDate:yyyy-MM-dd} to {toDate:yyyy-MM-dd}",
+                metrics
             });
         }
 

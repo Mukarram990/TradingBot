@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using TradingBot.Domain.Entities;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Interfaces;
+using TradingBot.Middleware;
 using TradingBot.Persistence;
 
 namespace TradingBot.API.Controllers
@@ -11,8 +12,8 @@ namespace TradingBot.API.Controllers
     /// Full CRUD + query surface for trades.
     ///
     /// Write endpoints (existing):
-    ///   POST /api/trade/open            — open a new trade via Binance
-    ///   POST /api/trade/close/{id}      — close an open trade via Binance
+    ///   POST /api/trade/open            — open a new trade via Binance [REQUIRES AUTH]
+    ///   POST /api/trade/close/{id}      — close an open trade via Binance [REQUIRES AUTH]
     ///
     /// Read endpoints (new — for dashboard):
     ///   GET  /api/trades                — paginated list with optional filters
@@ -41,7 +42,11 @@ namespace TradingBot.API.Controllers
 
         // ── Write endpoints ───────────────────────────────────────────────
 
+        /// <summary>
+        /// Open a new trade. Requires API authentication.
+        /// </summary>
         [HttpPost("trade/open")]
+        [Authorize]
         public async Task<IActionResult> OpenTrade([FromBody] TradeSignal signal)
         {
             try
@@ -56,7 +61,11 @@ namespace TradingBot.API.Controllers
             }
         }
 
+        /// <summary>
+        /// Close an open trade. Requires API authentication.
+        /// </summary>
         [HttpPost("trade/close/{tradeId:int}")]
+        [Authorize]
         public async Task<IActionResult> CloseTrade(int tradeId)
         {
             try
