@@ -33,7 +33,7 @@ namespace TradingBot.Middleware
                 await TryPersistAsync(context, ex);
 
                 bool isDomain = ex is InvalidOperationException
-                             || ex.GetType() == typeof(Exception);
+                             || ex is ArgumentException;
 
                 context.Response.StatusCode = isDomain ? 400 : 500;
                 context.Response.ContentType = "application/json";

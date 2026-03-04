@@ -13,7 +13,6 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\TradingBot.Domain\TradingBot.Domain.csproj" />
-		<ProjectReference Include="..\TradingBot.Persistence\TradingBot.Persistence.csproj" />
 	</ItemGroup>
 
 </Project>

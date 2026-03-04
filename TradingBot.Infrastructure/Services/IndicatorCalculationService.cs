@@ -1,10 +1,10 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using TradingBot.Domain.Entities;
 using TradingBot.Domain.Interfaces;
 using TradingBot.Persistence;
 
-namespace TradingBot.Application
+namespace TradingBot.Infrastructure.Services
 {
     /// <summary>
     /// Calculates all technical indicators used by the strategy engine.

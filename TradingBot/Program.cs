@@ -39,10 +39,10 @@ builder.Services.AddScoped<IRiskManagementService>(sp => sp.GetRequiredService<R
 builder.Services.AddScoped<ITradeMonitoringService, TradeMonitoringService>();
 builder.Services.AddHostedService<TradeMonitoringWorker>();
 
-// Phase 2 - Indicator + scanner + strategy engine
-builder.Services.AddScoped<IIndicatorService, IndicatorCalculationService>();
-builder.Services.AddScoped<IMarketScannerService, MarketScannerService>();
-builder.Services.AddScoped<IStrategyEngine, StrategyEngine>();
+// Phase 2 - Indicator + scanner + strategy engine (Infrastructure layer — needs DB access)
+builder.Services.AddScoped<IIndicatorService, TradingBot.Infrastructure.Services.IndicatorCalculationService>();
+builder.Services.AddScoped<IMarketScannerService, TradingBot.Infrastructure.Services.MarketScannerService>();
+builder.Services.AddScoped<IStrategyEngine, TradingBot.Infrastructure.Services.StrategyEngine>();
 
 // ── Phase 3 - AI Intelligence Layer ──────────────────────────────────────────
 builder.Services.Configure<AiOptions>(builder.Configuration.GetSection("AI"));

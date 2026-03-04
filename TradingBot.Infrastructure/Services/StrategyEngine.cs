@@ -1,11 +1,11 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using TradingBot.Domain.Entities;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Interfaces;
 using TradingBot.Persistence;
 
-namespace TradingBot.Application
+namespace TradingBot.Infrastructure.Services
 {
     /// <summary>
     /// Rule-based strategy engine that converts an IndicatorSnapshot into a
