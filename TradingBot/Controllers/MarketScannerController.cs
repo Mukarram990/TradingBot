@@ -1,5 +1,6 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using TradingBot.Domain.Interfaces;
+using TradingBot.Middleware;
 
 namespace TradingBot.API.Controllers
 {
@@ -15,6 +16,7 @@ namespace TradingBot.API.Controllers
     /// </summary>
     [ApiController]
     [Route("api/scanner")]
+    [Authorize]
     public class MarketScannerController : ControllerBase
     {
         private readonly IMarketScannerService _scanner;

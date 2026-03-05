@@ -1,15 +1,17 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Interfaces;
 using TradingBot.Infrastructure.Binance;
 using TradingBot.Persistence;
+using TradingBot.Middleware;
 using TradingBot.Services;
 
 namespace TradingBot.API.Controllers
 {
     [ApiController]
     [Route("api/portfolio")]
+    [Authorize]
     public class PortfolioController : ControllerBase
     {
         private readonly PortfolioManager _manager;

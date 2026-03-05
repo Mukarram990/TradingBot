@@ -7,9 +7,7 @@ namespace TradingBot.Persistence
     {
         public DbSet<Trade>? Trades { get; set; }
         public DbSet<Order>? Orders { get; set; }
-        public DbSet<Position>? Positions { get; set; }
         public DbSet<TradingPair>? TradingPairs { get; set; }
-        public DbSet<Candle>? Candles { get; set; }
         public DbSet<IndicatorSnapshot>? IndicatorSnapshots { get; set; }
         public DbSet<TradeSignal>? TradeSignals { get; set; }
         public DbSet<PortfolioSnapshot>? PortfolioSnapshots { get; set; }
@@ -17,7 +15,6 @@ namespace TradingBot.Persistence
         public DbSet<SystemLog>? SystemLogs { get; set; }
         public DbSet<AIResponse>? AIResponses { get; set; }
         public DbSet<RiskProfile>? RiskProfiles { get; set; }
-        public DbSet<Strategy>? Strategies { get; set; }
         public DbSet<MarketRegime>? MarketRegimes { get; set; }
         public DbSet<UserAccount>? UserAccounts { get; set; } 
 
@@ -38,9 +35,6 @@ namespace TradingBot.Persistence
             modelBuilder.Entity<TradingPair>()
                 .HasIndex(p => p.Symbol)
                 .IsUnique();
-
-            modelBuilder.Entity<Candle>()
-                .HasIndex(c => new { c.Symbol, c.OpenTime });
 
             modelBuilder.Entity<IndicatorSnapshot>()
                 .HasIndex(i => new { i.Symbol, i.Timestamp });

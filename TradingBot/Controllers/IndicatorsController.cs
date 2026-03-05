@@ -1,5 +1,6 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using TradingBot.Domain.Interfaces;
+using TradingBot.Middleware;
 
 namespace TradingBot.API.Controllers
 {
@@ -13,6 +14,7 @@ namespace TradingBot.API.Controllers
     /// </summary>
     [ApiController]
     [Route("api/indicators")]
+    [Authorize]
     public class IndicatorsController : ControllerBase
     {
         private readonly IIndicatorService _indicators;

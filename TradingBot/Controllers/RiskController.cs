@@ -2,11 +2,13 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TradingBot.Domain.Entities;
 using TradingBot.Persistence;
+using TradingBot.Middleware;
 
 namespace TradingBot.API.Controllers
 {
     [ApiController]
     [Route("api/risk")]
+    [Authorize]
     public class RiskController : ControllerBase
     {
         private readonly TradingBotDbContext _db;
@@ -52,3 +54,4 @@ namespace TradingBot.API.Controllers
         }
     }
 }
+

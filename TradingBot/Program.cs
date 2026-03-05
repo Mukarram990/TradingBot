@@ -125,8 +125,8 @@ builder.Services.AddSwaggerGen(c =>
     {
         Type = SecuritySchemeType.ApiKey,
         In = ParameterLocation.Header,
-        Name = "Authorization",
-        Description = "API Key authentication. Format: ApiKey {key}"
+        Name = "X-API-KEY",
+        Description = "API Key authentication. Header: X-API-KEY: {key}"
     });
 
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
@@ -172,6 +172,7 @@ using (var scope = app.Services.CreateScope())
 
     await RiskProfileSeeder.SeedDefaultRiskProfileAsync(db);
     await TradingPairsSeeder.SeedDefaultPairsAsync(db);
+    await DefaultAdminSeeder.SeedAsync(db, builder.Configuration, app.Logger);
 
     var today = DateTime.UtcNow.Date;
     var hasSnapshotToday = await db.PortfolioSnapshots!

@@ -1,7 +1,8 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TradingBot.Domain.Enums;
 using TradingBot.Persistence;
+using TradingBot.Middleware;
 
 namespace TradingBot.API.Controllers
 {
@@ -16,6 +17,7 @@ namespace TradingBot.API.Controllers
     /// </summary>
     [ApiController]
     [Route("api/system")]
+    [Authorize]
     public class SystemController : ControllerBase
     {
         private readonly TradingBotDbContext _db;

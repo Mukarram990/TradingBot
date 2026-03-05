@@ -3,16 +3,19 @@ using TradingBot.Domain.Enums;
 using TradingBot.Domain.Interfaces;
 using TradingBot.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace TradingBot.Services
 {
     public class RiskManagementService : IRiskManagementService
     {
         private readonly TradingBotDbContext _db;
+        private readonly ILogger<RiskManagementService> _logger;
 
-        public RiskManagementService(TradingBotDbContext db)
+        public RiskManagementService(TradingBotDbContext db, ILogger<RiskManagementService> logger)
         {
             _db = db;
+            _logger = logger;
         }
 
         // ─── Helper: Load RiskProfile from DB ───────────────────────────────
@@ -31,6 +34,9 @@ namespace TradingBot.Services
             // Load synchronously (EF in-process) — acceptable for guard checks
             var profile = _db.RiskProfiles.FirstOrDefault()
                 ?? throw new InvalidOperationException("RiskProfile not configured.");
+
+            if (!profile.IsEnabled)
+                return true;
 
             var tradeCount = _db.Trades
                 .Count(t => t.EntryTime.Date == today);
@@ -61,6 +67,7 @@ namespace TradingBot.Services
 
             var profile = _db.RiskProfiles.FirstOrDefault();
             if (profile == null) return false;
+            if (!profile.IsEnabled) return false;
 
             var lossPercent = (startingBalanceToday - currentBalance) / startingBalanceToday;
             return lossPercent >= profile.MaxDailyLossPercent;   // e.g. 0.05 = 5%
@@ -69,6 +76,10 @@ namespace TradingBot.Services
         // ─── 4. Stop loss validation ─────────────────────────────────────────
         public bool IsStopLossValid(decimal entryPrice, decimal stopLoss)
         {
+            var profile = _db.RiskProfiles.FirstOrDefault();
+            if (profile is { IsEnabled: false })
+                return true;
+
             // Spot long only: SL must be below entry
             return stopLoss > 0 && stopLoss < entryPrice;
         }
@@ -85,8 +96,12 @@ namespace TradingBot.Services
             var profile = _db.RiskProfiles.FirstOrDefault()
                 ?? throw new InvalidOperationException("RiskProfile not configured.");
 
+            // Even when risk gates are disabled we still size positions deterministically.
+            // If MaxRiskPerTradePercent is unset, fall back to 2%.
+            var riskPct = profile.MaxRiskPerTradePercent > 0m ? profile.MaxRiskPerTradePercent : 0.02m;
+
             // Risk amount = balance * MaxRiskPerTradePercent (e.g. 2%)
-            var riskAmount = accountBalance * profile.MaxRiskPerTradePercent;
+            var riskAmount = accountBalance * riskPct;
 
             // Units to buy = riskAmount / (entryPrice - stopLoss)
             var riskPerUnit = entryPrice - stopLoss;
@@ -105,17 +120,33 @@ namespace TradingBot.Services
         {
             var profile = _db.RiskProfiles.FirstOrDefault();
             if (profile == null) return false;
+            if (!profile.IsEnabled) return false;
 
             var today = DateTime.UtcNow.Date;
 
-            // Count consecutive losing closed trades today
-            var losingTradesToday = _db.Trades
+            // Count trailing consecutive losing closed trades today.
+            var closedToday = _db.Trades
                 .Where(t => t.Status == TradeStatus.Closed
-                         && t.EntryTime.Date == today
-                         && t.PnL < 0)
-                .Count();
+                         && (t.ExitTime ?? t.EntryTime).Date == today)
+                .OrderByDescending(t => t.ExitTime ?? t.EntryTime)
+                .ToList();
 
-            return losingTradesToday >= profile.CircuitBreakerLossCount;   // e.g. 3
+            int trailingLosses = 0;
+            foreach (var trade in closedToday)
+            {
+                if ((trade.PnL ?? 0m) < 0m) trailingLosses++;
+                else break;
+            }
+
+            var triggered = trailingLosses >= profile.CircuitBreakerLossCount;
+            if (triggered)
+            {
+                _logger.LogWarning(
+                    "Circuit breaker triggered: {Losses} consecutive losses reached threshold {Threshold}.",
+                    trailingLosses, profile.CircuitBreakerLossCount);
+            }
+
+            return triggered;
         }
     }
 }

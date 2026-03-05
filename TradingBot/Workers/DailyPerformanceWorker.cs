@@ -67,8 +67,10 @@ namespace TradingBot.Workers
         {
             var trades = await db.Trades!
                 .AsNoTracking()
-                .Where(t => t.Status == TradeStatus.Closed && t.EntryTime.Date == date.Date)
-                .OrderBy(t => t.EntryTime)
+                .Where(t => t.Status == TradeStatus.Closed
+                         && t.ExitTime.HasValue
+                         && t.ExitTime.Value.Date == date.Date)
+                .OrderBy(t => t.ExitTime)
                 .ToListAsync(ct);
 
             if (trades.Count == 0)

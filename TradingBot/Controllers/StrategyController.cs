@@ -1,5 +1,6 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using TradingBot.Domain.Interfaces;
+using TradingBot.Middleware;
 
 namespace TradingBot.API.Controllers
 {
@@ -14,6 +15,7 @@ namespace TradingBot.API.Controllers
     /// </summary>
     [ApiController]
     [Route("api/strategy")]
+    [Authorize]
     public class StrategyController : ControllerBase
     {
         private readonly IStrategyEngine _strategy;

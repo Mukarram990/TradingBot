@@ -1,8 +1,9 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TradingBot.Domain.Entities;
 using TradingBot.Infrastructure.AI;
 using TradingBot.Persistence;
+using TradingBot.Middleware;
 
 namespace TradingBot.API.Controllers
 {
@@ -18,6 +19,7 @@ namespace TradingBot.API.Controllers
     /// </summary>
     [ApiController]
     [Route("api/ai")]
+    [Authorize]
     public class AIController : ControllerBase
     {
         private readonly MultiProviderAIService _multiAI;

@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Net;
 using Microsoft.EntityFrameworkCore;
 using TradingBot.Persistence;
 
@@ -8,7 +9,7 @@ namespace TradingBot.Middleware
     /// <summary>
     /// API Key authentication middleware.
     /// 
-    /// Expected header format: Authorization: ApiKey {plaintext-key}
+    /// Expected header format: X-API-KEY: {plaintext-key}
     /// Validates against hashed keys in UserAccount.ApiKeyHash.
     /// 
     /// If valid, sets HttpContext.User with user info in claims.
@@ -27,13 +28,42 @@ namespace TradingBot.Middleware
 
         public async Task InvokeAsync(HttpContext context, TradingBotDbContext db)
         {
-            var authHeader = context.Request.Headers.Authorization.FirstOrDefault();
-
-            if (authHeader != null && authHeader.StartsWith("ApiKey ", StringComparison.OrdinalIgnoreCase))
+            var path = context.Request.Path.Value ?? string.Empty;
+            if (!path.StartsWith("/api", StringComparison.OrdinalIgnoreCase))
             {
-                var key = authHeader["ApiKey ".Length..].Trim();
+                await _next(context);
+                return;
+            }
 
-                var user = await ValidateApiKeyAsync(db, key);
+            // Optional internal bypass for non-user service calls originating from localhost.
+            var internalBypass = string.Equals(
+                context.Request.Headers["X-INTERNAL-REQUEST"].FirstOrDefault(),
+                "true",
+                StringComparison.OrdinalIgnoreCase);
+            if (internalBypass
+                && context.Connection.RemoteIpAddress != null
+                && IPAddress.IsLoopback(context.Connection.RemoteIpAddress))
+            {
+                await _next(context);
+                return;
+            }
+
+            var headerKey = context.Request.Headers["X-API-KEY"].FirstOrDefault();
+
+            // Backward compatibility: support Authorization: ApiKey {key}
+            if (string.IsNullOrWhiteSpace(headerKey))
+            {
+                var authHeader = context.Request.Headers.Authorization.FirstOrDefault();
+                if (!string.IsNullOrWhiteSpace(authHeader) &&
+                    authHeader.StartsWith("ApiKey ", StringComparison.OrdinalIgnoreCase))
+                {
+                    headerKey = authHeader["ApiKey ".Length..].Trim();
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(headerKey))
+            {
+                var user = await ValidateApiKeyAsync(db, headerKey);
 
                 if (user != null)
                 {
@@ -58,7 +88,13 @@ namespace TradingBot.Middleware
             }
             else
             {
-                // No API key provided — continue (endpoints will check [Authorize] attribute)
+                context.Response.StatusCode = 401;
+                await context.Response.WriteAsJsonAsync(new
+                {
+                    error = "Unauthorized",
+                    message = "API key required. Supply header X-API-KEY."
+                });
+                return;
             }
 
             await _next(context);

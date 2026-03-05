@@ -12,6 +12,7 @@ namespace TradingBot.API.Controllers
     /// </summary>
     [ApiController]
     [Route("api/auth")]
+    [Authorize]
     public class AuthController : ControllerBase
     {
         private readonly TradingBotDbContext _db;
@@ -56,7 +57,7 @@ namespace TradingBot.API.Controllers
                 apiKey = plainKey,
                 warning = "⚠️ Save this key securely. You won't be able to see it again!",
                 generatedAt = DateTime.UtcNow,
-                usage = "Authorization: ApiKey {apiKey}"
+                usage = "X-API-KEY: {apiKey}"
             });
         }
 

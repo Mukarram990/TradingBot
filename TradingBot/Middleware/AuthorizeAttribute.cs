@@ -21,7 +21,7 @@ namespace TradingBot.Middleware
                 context.Result = new UnauthorizedObjectResult(new
                 {
                     error = "Unauthorized",
-                    message = "API key required. Use header: Authorization: ApiKey {key}"
+                    message = "API key required. Use header: X-API-KEY: {key}"
                 });
             }
 

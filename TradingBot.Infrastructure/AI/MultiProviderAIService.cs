@@ -70,12 +70,16 @@ namespace TradingBot.Infrastructure.AI
         public async Task<string> AnalyzeMarketRegimeAsync(
             string symbol, IndicatorSnapshot snapshot)
         {
+            if (snapshot == null)
+                throw new ArgumentNullException(nameof(snapshot));
+
             var result = await ExecuteWithFallback(
-                provider => provider.AnalyzeMarketRegimeAsync(symbol, snapshot)
-                    .ContinueWith(t => new AISignalResult { Reasoning = t.Result }),
-                "AnalyzeRegime",
-                returnStringMode: true,
-                fallbackString: "Ranging");
+                async provider =>
+                {
+                    var regime = await provider.AnalyzeMarketRegimeAsync(symbol, snapshot);
+                    return new AISignalResult { Reasoning = regime, Action = "HOLD", Confidence = 0 };
+                },
+                "AnalyzeRegime");
 
             return result.Reasoning;
         }
@@ -84,9 +88,7 @@ namespace TradingBot.Infrastructure.AI
 
         private async Task<AISignalResult> ExecuteWithFallback(
             Func<IAISignalService, Task<AISignalResult>> operation,
-            string operationName,
-            bool returnStringMode = false,
-            string fallbackString = "")
+            string operationName)
         {
             var priorityOrder = BuildPriorityList();
             var exhausted = new List<string>();
@@ -109,18 +111,7 @@ namespace TradingBot.Infrastructure.AI
                 {
                     _logger.LogDebug("AI [{Op}] trying provider {Provider}.", operationName, providerType);
 
-                    AISignalResult result;
-
-                    if (returnStringMode)
-                    {
-                        // For regime analysis, call the regime method and wrap result
-                        var regime = await service.AnalyzeMarketRegimeAsync("", null!);
-                        result = new AISignalResult { Reasoning = regime };
-                    }
-                    else
-                    {
-                        result = await operation(service);
-                    }
+                    var result = await operation(service);
 
                     _logger.LogInformation(
                         "AI [{Op}] success via {Provider} ({Model}) — action={Action} confidence={Conf}",

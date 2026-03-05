@@ -1,9 +1,10 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TradingBot.Application;
 using TradingBot.Domain.Entities;
 using TradingBot.Domain.Enums;
 using TradingBot.Persistence;
+using TradingBot.Middleware;
 
 namespace TradingBot.API.Controllers
 {
@@ -18,6 +19,7 @@ namespace TradingBot.API.Controllers
     /// </summary>
     [ApiController]
     [Route("api/performance")]
+    [Authorize]
     public class PerformanceController : ControllerBase
     {
         private readonly TradingBotDbContext _db;
@@ -253,7 +255,8 @@ namespace TradingBot.API.Controllers
             var trades = await _db.Trades!
                 .AsNoTracking()
                 .Where(t => t.Status == TradeStatus.Closed
-                         && t.EntryTime.Date == targetDate)
+                         && t.ExitTime.HasValue
+                         && t.ExitTime.Value.Date == targetDate)
                 .ToListAsync();
 
             if (trades.Count == 0)
@@ -318,3 +321,4 @@ namespace TradingBot.API.Controllers
         }
     }
 }
+

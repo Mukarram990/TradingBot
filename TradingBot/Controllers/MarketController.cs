@@ -1,7 +1,8 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TradingBot.Domain.Interfaces;
 using TradingBot.Persistence;
+using TradingBot.Middleware;
 
 namespace TradingBot.API.Controllers
 {
@@ -20,6 +21,7 @@ namespace TradingBot.API.Controllers
     /// </summary>
     [ApiController]
     [Route("api/market")]
+    [Authorize]
     public class MarketController : ControllerBase
     {
         private readonly IMarketDataService _market;

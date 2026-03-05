@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TradingBot.Domain.Entities;
 using TradingBot.Domain.Enums;
@@ -24,6 +24,7 @@ namespace TradingBot.API.Controllers
     /// </summary>
     [ApiController]
     [Route("api")]
+    [Authorize]
     public class TradeController : ControllerBase
     {
         private readonly ITradeExecutionService _trade;
@@ -49,16 +50,15 @@ namespace TradingBot.API.Controllers
         [Authorize]
         public async Task<IActionResult> OpenTrade([FromBody] TradeSignal signal)
         {
-            try
+            _logger.LogWarning(
+                "Blocked direct manual trade open attempt for {Symbol}. Use strategy/worker pipeline instead.",
+                signal.Symbol);
+
+            return StatusCode(403, new
             {
-                var order = await _trade.OpenTradeAsync(signal);
-                return Ok(order);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to open trade for {Symbol}", signal.Symbol);
-                return BadRequest(new { error = ex.Message });
-            }
+                error = "Direct trade execution disabled.",
+                message = "Manual trade open is blocked to enforce strategy -> AI -> risk pipeline."
+            });
         }
 
         /// <summary>

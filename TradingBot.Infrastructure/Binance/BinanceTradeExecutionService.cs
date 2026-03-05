@@ -8,6 +8,8 @@ using TradingBot.Domain.Enums;
 using TradingBot.Domain.Interfaces;
 using TradingBot.Infrastructure.Binance.Models;
 using TradingBot.Persistence;
+using System.Globalization;
+using Microsoft.Extensions.Logging;
 
 namespace TradingBot.Infrastructure.Binance
 {
@@ -20,15 +22,23 @@ namespace TradingBot.Infrastructure.Binance
         private readonly TradingBotDbContext _dbContext;
         private readonly BinanceAccountService _accountService;
         private readonly IRiskManagementService _risk;
+        private readonly ILogger<BinanceTradeExecutionService> _logger;
 
 
-        public BinanceTradeExecutionService(HttpClient httpClient, IOptions<BinanceOptions> options, TradingBotDbContext dbContext, IRiskManagementService risk, BinanceAccountService accountService)
+        public BinanceTradeExecutionService(
+            HttpClient httpClient,
+            IOptions<BinanceOptions> options,
+            TradingBotDbContext dbContext,
+            IRiskManagementService risk,
+            BinanceAccountService accountService,
+            ILogger<BinanceTradeExecutionService> logger)
         {
             _httpClient = httpClient;
             _options = options.Value;
             _dbContext = dbContext;
             _risk = risk;
             _accountService = accountService;
+            _logger = logger;
 
             _httpClient.BaseAddress = new Uri(_options.BaseUrl);
             _signatureService = new BinanceSignatureService(_options.ApiSecret);
@@ -67,7 +77,14 @@ namespace TradingBot.Infrastructure.Binance
                 signal.EntryPrice,
                 signal.StopLoss);
 
-            signal.Quantity = calculatedQuantity;
+            // Enforce Binance lot-size and minimum notional constraints before placing order.
+            signal.Quantity = await NormalizeOrderQuantityAsync(
+                signal.Symbol ?? throw new InvalidOperationException("Signal symbol is required."),
+                calculatedQuantity,
+                signal.EntryPrice);
+            _logger.LogInformation("Normalized quantity for {Symbol}: requested={Requested}, final={Final}",
+                signal.Symbol, calculatedQuantity, signal.Quantity);
+
             if (signal.Action != TradeAction.Buy)
                 throw new InvalidOperationException("Only BUY entry is supported in this method.");
 
@@ -157,7 +174,76 @@ namespace TradingBot.Infrastructure.Binance
             _dbContext.Orders.Add(order);
             await _dbContext.SaveChangesAsync();
 
+            _logger.LogInformation(
+                "Trade opened for {Symbol}. TradeId={TradeId}, OrderId={OrderId}, Qty={Qty}, Entry={Entry}",
+                trade.Symbol, trade.ID, order.ExternalOrderId, trade.Quantity, trade.EntryPrice);
+
             return order;
+        }
+
+        private async Task<decimal> NormalizeOrderQuantityAsync(string symbol, decimal requestedQuantity, decimal referencePrice)
+        {
+            var filters = await GetSymbolTradeFiltersAsync(symbol);
+
+            if (requestedQuantity <= 0m)
+                throw new Exception($"Calculated quantity is invalid for {symbol}: {requestedQuantity}.");
+
+            if (filters.StepSize > 0m)
+            {
+                requestedQuantity = Math.Floor(requestedQuantity / filters.StepSize) * filters.StepSize;
+            }
+
+            requestedQuantity = Math.Round(requestedQuantity, 8, MidpointRounding.ToZero);
+
+            if (requestedQuantity < filters.MinQty)
+                throw new Exception(
+                    $"Quantity {requestedQuantity} is below Binance LOT_SIZE minQty {filters.MinQty} for {symbol}.");
+
+            var estimatedNotional = requestedQuantity * referencePrice;
+            if (filters.MinNotional > 0m && estimatedNotional < filters.MinNotional)
+                throw new Exception(
+                    $"Order notional {estimatedNotional:F8} is below Binance MIN_NOTIONAL {filters.MinNotional} for {symbol}.");
+
+            return requestedQuantity;
+        }
+
+        private async Task<(decimal MinQty, decimal StepSize, decimal MinNotional)> GetSymbolTradeFiltersAsync(string symbol)
+        {
+            var response = await _httpClient.GetAsync($"/api/v3/exchangeInfo?symbol={symbol}");
+            response.EnsureSuccessStatusCode();
+
+            var json = await response.Content.ReadAsStringAsync();
+            var root = JsonSerializer.Deserialize<JsonElement>(json);
+
+            if (!root.TryGetProperty("symbols", out var symbols) || symbols.GetArrayLength() == 0)
+                throw new Exception($"No exchangeInfo data returned for symbol {symbol}.");
+
+            var symbolNode = symbols[0];
+            if (!symbolNode.TryGetProperty("filters", out var filters))
+                throw new Exception($"No filters found in exchangeInfo for symbol {symbol}.");
+
+            decimal minQty = 0m;
+            decimal stepSize = 0m;
+            decimal minNotional = 0m;
+
+            foreach (var filter in filters.EnumerateArray())
+            {
+                var filterType = filter.GetProperty("filterType").GetString();
+                if (filterType == "LOT_SIZE")
+                {
+                    minQty = decimal.Parse(filter.GetProperty("minQty").GetString() ?? "0", CultureInfo.InvariantCulture);
+                    stepSize = decimal.Parse(filter.GetProperty("stepSize").GetString() ?? "0", CultureInfo.InvariantCulture);
+                }
+                else if (filterType == "MIN_NOTIONAL")
+                {
+                    minNotional = decimal.Parse(filter.GetProperty("minNotional").GetString() ?? "0", CultureInfo.InvariantCulture);
+                }
+            }
+
+            if (minQty <= 0m || stepSize <= 0m)
+                throw new Exception($"Invalid LOT_SIZE filters received for {symbol}.");
+
+            return (minQty, stepSize, minNotional);
         }
 
 
@@ -244,6 +330,10 @@ namespace TradingBot.Infrastructure.Binance
             _dbContext.Orders.Add(order);
 
             await _dbContext.SaveChangesAsync();
+
+            _logger.LogInformation(
+                "Trade closed for {Symbol}. TradeId={TradeId}, OrderId={OrderId}, Exit={Exit}, PnL={PnL}",
+                trade.Symbol, trade.ID, order.ExternalOrderId, trade.ExitPrice, trade.PnL);
 
             return order;
         }
