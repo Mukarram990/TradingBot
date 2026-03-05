@@ -1,7 +1,7 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Http.Resilience;
 using Polly;
-namespace TradingBot.Infrastructure.Resilience
+namespace TradingBot.Infrastructure
 {
     // INSTALL: dotnet add TradingBot package Microsoft.Extensions.Http.Resilience
     // See PHASE4_PLAN.md for full Program.cs integration snippet.

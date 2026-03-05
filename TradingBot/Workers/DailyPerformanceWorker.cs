@@ -3,7 +3,7 @@ using TradingBot.Domain.Entities;
 using TradingBot.Domain.Enums;
 using TradingBot.Persistence;
 
-namespace TradingBot.Workers
+namespace TradingBot.API.Workers
 {
     /// <summary>
     /// Automatically calculates and persists DailyPerformance records.

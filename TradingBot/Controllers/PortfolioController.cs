@@ -5,7 +5,7 @@ using TradingBot.Domain.Interfaces;
 using TradingBot.Infrastructure.Binance;
 using TradingBot.Persistence;
 using TradingBot.Middleware;
-using TradingBot.Services;
+using TradingBot.API.Services;
 
 namespace TradingBot.API.Controllers
 {

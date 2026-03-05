@@ -4,7 +4,7 @@ using System.Net;
 using Microsoft.EntityFrameworkCore;
 using TradingBot.Persistence;
 
-namespace TradingBot.Middleware
+namespace TradingBot.API.Middleware
 {
     /// <summary>
     /// API Key authentication middleware.
@@ -107,7 +107,7 @@ namespace TradingBot.Middleware
             await _next(context);
         }
 
-        private async Task<TradingBot.Domain.Entities.UserAccount?> ValidateApiKeyAsync(
+        private async Task<Domain.Entities.UserAccount?> ValidateApiKeyAsync(
             TradingBotDbContext db, string plainKey)
         {
             if (string.IsNullOrWhiteSpace(plainKey))

@@ -3,7 +3,7 @@ using System.Text.Json;
 using TradingBot.Domain.Entities;
 using TradingBot.Persistence;
 
-namespace TradingBot.Middleware
+namespace TradingBot.API.Middleware
 {
     /// <summary>
     /// Global exception handler. Register with:

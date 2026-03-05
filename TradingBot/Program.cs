@@ -1,18 +1,18 @@
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
+using TradingBot.API.Middleware;
+using TradingBot.API.Services;
+using TradingBot.API.Workers;
 using TradingBot.Application;
 using TradingBot.Domain.Interfaces;
+using TradingBot.Infrastructure;
 using TradingBot.Infrastructure.AI;
 using TradingBot.Infrastructure.Binance;
 using TradingBot.Infrastructure.Binance.Models;
-using TradingBot.Infrastructure.Resilience;
 using TradingBot.Infrastructure.Services;
-using TradingBot.Middleware;
 using TradingBot.Persistence;
 using TradingBot.Persistence.SeedData;
-using TradingBot.Services;
-using TradingBot.Workers;
 
 var builder = WebApplication.CreateBuilder(args);
 

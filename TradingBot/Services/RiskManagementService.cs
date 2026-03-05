@@ -5,7 +5,7 @@ using TradingBot.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
-namespace TradingBot.Services
+namespace TradingBot.API.Services
 {
     public class RiskManagementService : IRiskManagementService
     {

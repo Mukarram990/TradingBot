@@ -6,7 +6,7 @@ using TradingBot.Domain.Interfaces;
 using TradingBot.Infrastructure.AI;
 using TradingBot.Persistence;
 
-namespace TradingBot.Workers
+namespace TradingBot.API.Workers
 {
     /// <summary>
     /// Phase 2 + Phase 3 combined background worker.

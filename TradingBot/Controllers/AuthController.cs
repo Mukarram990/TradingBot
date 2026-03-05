@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using TradingBot.API.Middleware;
 using TradingBot.Middleware;
 using TradingBot.Persistence;
 

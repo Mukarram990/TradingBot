@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 
-namespace TradingBot.Middleware
+namespace TradingBot.API.Middleware
 {
     /// <summary>
     /// Authorization attribute. Apply to controllers/actions that require API key auth.

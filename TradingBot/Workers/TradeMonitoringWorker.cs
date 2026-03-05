@@ -1,6 +1,6 @@
 using TradingBot.Infrastructure.Services;
 
-namespace TradingBot.Workers
+namespace TradingBot.API.Workers
 {
     public class TradeMonitoringWorker : BackgroundService
     {

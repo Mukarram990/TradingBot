@@ -3,7 +3,7 @@ using TradingBot.Domain.Interfaces;
 using TradingBot.Infrastructure.Binance;
 using TradingBot.Persistence;
 
-namespace TradingBot.Services
+namespace TradingBot.API.Services
 {
     public class PortfolioManager
     {
