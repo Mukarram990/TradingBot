@@ -153,11 +153,11 @@ if (!app.Environment.IsDevelopment())
 // Clean JSON error responses + auto-logs every exception to SystemLogs table
 app.UseExceptionHandler(GlobalExceptionHandler.Handle);
 
-// API Key Authentication middleware
-app.UseMiddleware<ApiKeyAuthenticationMiddleware>();
-
 // CORS
 app.UseCors("AllowFrontend");
+
+// API Key Authentication middleware
+app.UseMiddleware<ApiKeyAuthenticationMiddleware>();
 
 // Rate limiter
 app.UseRateLimiter();

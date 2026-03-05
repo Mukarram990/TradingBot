@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TradingBot Terminal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./css/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <h1>TradingBot Terminal</h1>
+        <p id="last-refresh">Waiting for first sync...</p>
+      </div>
+      <form id="auth-form" class="auth-form">
+        <input id="api-base-url" type="text" placeholder="API Base URL (e.g. https://localhost:7282)" />
+        <input id="api-key" type="password" placeholder="X-API-KEY" required />
+        <button type="submit">Connect</button>
+      </form>
+    </header>
+
+    <main class="grid">
+      <section class="card">
+        <h2>System Status</h2>
+        <div class="kpis two-col">
+          <div><span>Status</span><strong id="sys-status">-</strong></div>
+          <div><span>DB</span><strong id="db-status">-</strong></div>
+          <div><span>Signal Worker</span><strong id="signal-worker-status">-</strong></div>
+          <div><span>Monitor Worker</span><strong id="monitor-worker-status">-</strong></div>
+          <div><span>Last Strategy Tick</span><strong id="last-strategy-tick">-</strong></div>
+          <div><span>Last AI Decision</span><strong id="last-ai-decision">-</strong></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Account Overview</h2>
+        <div class="kpis three-col">
+          <div><span>Total Balance</span><strong id="balance-total">-</strong></div>
+          <div><span>Daily PnL</span><strong id="balance-daily-pnl">-</strong></div>
+          <div><span>Open Trades</span><strong id="balance-open-trades">-</strong></div>
+          <div><span>Total PnL</span><strong id="summary-total-pnl">-</strong></div>
+          <div><span>Win Rate</span><strong id="summary-win-rate">-</strong></div>
+          <div><span>Closed Trades</span><strong id="summary-closed-trades">-</strong></div>
+        </div>
+      </section>
+
+      <section class="card chart-card span-2">
+        <div class="card-header-row">
+          <h2>Live Price Chart</h2>
+          <div class="inline-controls">
+            <input id="chart-symbol" type="text" value="BTCUSDT" />
+            <select id="chart-interval">
+              <option>1m</option><option>5m</option><option>15m</option>
+              <option selected>1h</option><option>4h</option><option>1d</option>
+            </select>
+            <button id="chart-refresh-btn">Refresh</button>
+          </div>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="price-chart"></canvas>
+        </div>
+      </section>
+
+      <section class="card span-2">
+        <div class="card-header-row"><h2>Active Trades</h2><span id="active-trades-count">0</span></div>
+        <div id="active-trades-table"></div>
+      </section>
+
+      <section class="card span-2">
+        <div class="card-header-row"><h2>Trade History</h2><span id="trade-history-count">0</span></div>
+        <div id="trade-history-table"></div>
+      </section>
+
+      <section class="card span-2">
+        <div class="card-header-row"><h2>Orders</h2><span id="orders-count">0</span></div>
+        <div id="orders-table"></div>
+      </section>
+
+      <section class="card">
+        <h2>AI Verification</h2>
+        <div id="ai-panel" class="list-stack"></div>
+      </section>
+
+      <section class="card">
+        <h2>Risk Management</h2>
+        <div class="kpis two-col">
+          <div><span>Risk / Trade</span><strong id="risk-per-trade">-</strong></div>
+          <div><span>Max Daily Loss</span><strong id="risk-max-daily-loss">-</strong></div>
+          <div><span>Max Trades / Day</span><strong id="risk-max-trades">-</strong></div>
+          <div><span>Circuit Breaker</span><strong id="risk-breaker">-</strong></div>
+          <div><span>Current Exposure</span><strong id="risk-exposure">-</strong></div>
+          <div><span>Risk Enabled</span><strong id="risk-enabled">-</strong></div>
+        </div>
+      </section>
+
+      <section class="card span-2">
+        <div class="card-header-row"><h2>Strategy Signals</h2><span id="signals-count">0</span></div>
+        <div id="signals-table"></div>
+      </section>
+
+      <section class="card span-2">
+        <div class="card-header-row"><h2>Logs</h2><span id="logs-count">0</span></div>
+        <div id="logs-panel" class="logs-panel"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="./js/api.js"></script>
+  <script src="./js/tables.js"></script>
+  <script src="./js/charts.js"></script>
+  <script src="./js/dashboard.js"></script>
+</body>
+</html>

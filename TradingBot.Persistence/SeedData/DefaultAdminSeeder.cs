@@ -25,7 +25,12 @@ namespace TradingBot.Persistence.SeedData
                 plainApiKey = config["ADMIN_API_KEY"];
 
             if (string.IsNullOrWhiteSpace(plainApiKey))
-                plainApiKey = "6b30383ca83343349d53c0e931db97fd";
+            {
+                logger.LogWarning(
+                    "No bootstrap API key configured. Skipping default admin seed. " +
+                    "Set Auth:DefaultAdminApiKey / ADMIN_API_KEY or insert UserAccount + ApiKeyHash manually.");
+                return;
+            }
 
             var user = new UserAccount
             {
@@ -39,7 +44,7 @@ namespace TradingBot.Persistence.SeedData
             await db.SaveChangesAsync();
 
             logger.LogWarning(
-                "Default admin account seeded. Username={Username}. Configure Auth:DefaultAdminApiKey (or ADMIN_API_KEY) and rotate immediately.",
+                "Default admin account seeded. Username={Username}. Rotate this key immediately after first use.",
                 username);
         }
 

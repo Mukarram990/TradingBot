@@ -28,6 +28,13 @@ namespace TradingBot.Middleware
 
         public async Task InvokeAsync(HttpContext context, TradingBotDbContext db)
         {
+            // Let CORS preflight requests pass through unchallenged.
+            if (HttpMethods.IsOptions(context.Request.Method))
+            {
+                await _next(context);
+                return;
+            }
+
             var path = context.Request.Path.Value ?? string.Empty;
             if (!path.StartsWith("/api", StringComparison.OrdinalIgnoreCase))
             {
