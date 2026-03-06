@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using TradingBot.Domain.Entities;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Interfaces;
-using TradingBot.Middleware;
+using TradingBot.API.Middleware;
 using TradingBot.Persistence;
 
 namespace TradingBot.API.Controllers
@@ -277,3 +277,4 @@ namespace TradingBot.API.Controllers
         }
     }
 }
+

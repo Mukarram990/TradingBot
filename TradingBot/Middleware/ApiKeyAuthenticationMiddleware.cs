@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Net;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.EntityFrameworkCore;
 using TradingBot.Persistence;
 
@@ -17,13 +18,20 @@ namespace TradingBot.API.Middleware
     /// </summary>
     public class ApiKeyAuthenticationMiddleware
     {
+        private sealed record CachedApiUser(int Id, string Username);
+
         private readonly RequestDelegate _next;
         private readonly ILogger<ApiKeyAuthenticationMiddleware> _logger;
+        private readonly IMemoryCache _cache;
 
-        public ApiKeyAuthenticationMiddleware(RequestDelegate next, ILogger<ApiKeyAuthenticationMiddleware> logger)
+        public ApiKeyAuthenticationMiddleware(
+            RequestDelegate next,
+            ILogger<ApiKeyAuthenticationMiddleware> logger,
+            IMemoryCache cache)
         {
             _next = next;
             _logger = logger;
+            _cache = cache;
         }
 
         public async Task InvokeAsync(HttpContext context, TradingBotDbContext db)
@@ -83,7 +91,7 @@ namespace TradingBot.API.Middleware
                     context.Items["UserId"] = user.ID;
                     context.Items["Username"] = user.Username;
 
-                    _logger.LogInformation("API Key authenticated for user {UserId}", user.ID);
+                    _logger.LogDebug("API Key authenticated for user {UserId}", user.ID);
                 }
                 else
                 {
@@ -114,10 +122,32 @@ namespace TradingBot.API.Middleware
                 return null;
 
             var hash = HashApiKey(plainKey);
-            var user = (await db.UserAccounts!
-                .Where(u => u.ApiKeyHash == hash && u.IsActive)
-                .ToListAsync())
-                .FirstOrDefault();
+
+            if (_cache.TryGetValue<CachedApiUser>($"api-key:{hash}", out var cached))
+            {
+                return new Domain.Entities.UserAccount
+                {
+                    ID = cached!.Id,
+                    Username = cached.Username,
+                    IsActive = true
+                };
+            }
+
+            var user = await db.UserAccounts!
+                .AsNoTracking()
+                .FirstOrDefaultAsync(u => u.ApiKeyHash == hash && u.IsActive);
+
+            if (user != null)
+            {
+                _cache.Set(
+                    $"api-key:{hash}",
+                    new CachedApiUser(user.ID, user.Username ?? $"User{user.ID}"),
+                    new MemoryCacheEntryOptions
+                    {
+                        AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(2),
+                        SlidingExpiration = TimeSpan.FromMinutes(1)
+                    });
+            }
 
             return user;
         }

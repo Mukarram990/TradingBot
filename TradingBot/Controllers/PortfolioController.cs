@@ -4,7 +4,7 @@ using TradingBot.Domain.Enums;
 using TradingBot.Domain.Interfaces;
 using TradingBot.Infrastructure.Binance;
 using TradingBot.Persistence;
-using TradingBot.Middleware;
+using TradingBot.API.Middleware;
 using TradingBot.API.Services;
 
 namespace TradingBot.API.Controllers
@@ -260,3 +260,4 @@ namespace TradingBot.API.Controllers
         }
     }
 }
+

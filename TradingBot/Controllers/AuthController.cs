@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
 using TradingBot.API.Middleware;
-using TradingBot.Middleware;
 using TradingBot.Persistence;
 
 namespace TradingBot.API.Controllers
@@ -110,3 +109,4 @@ namespace TradingBot.API.Controllers
         }
     }
 }
+

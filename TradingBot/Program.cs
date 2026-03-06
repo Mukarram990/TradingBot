@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
 using TradingBot.API.Middleware;
@@ -15,6 +14,8 @@ using TradingBot.Persistence;
 using TradingBot.Persistence.SeedData;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddMemoryCache();
 
 // ── Database ──────────────────────────────────────────────────────────────────
 builder.Services.AddDbContext<TradingBotDbContext>(options =>
@@ -69,20 +70,6 @@ builder.Services.AddHostedService<SignalGenerationWorker>();
 // ── Phase 4 - Production Hardening ───────────────────────────────────────────
 // Auto-populate DailyPerformances table at midnight UTC every night
 builder.Services.AddHostedService<DailyPerformanceWorker>();
-
-// Rate limiting: 60 requests / 60 seconds per IP (returns HTTP 429 when exceeded)
-builder.Services.AddRateLimiter(options =>
-{
-    options.AddSlidingWindowLimiter("global", limiter =>
-    {
-        limiter.PermitLimit = 60;
-        limiter.Window = TimeSpan.FromSeconds(60);
-        limiter.SegmentsPerWindow = 6;
-        limiter.QueueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst;
-        limiter.QueueLimit = 10;
-    });
-    options.RejectionStatusCode = 429;
-});
 
 // ── CORS (Enable frontend dashboard) ──────────────────────────────────────────
 builder.Services.AddCors(options =>
@@ -159,9 +146,6 @@ app.UseCors("AllowFrontend");
 // API Key Authentication middleware
 app.UseMiddleware<ApiKeyAuthenticationMiddleware>();
 
-// Rate limiter
-app.UseRateLimiter();
-
 // ── Startup Initialization ────────────────────────────────────────────────────
 using (var scope = app.Services.CreateScope())
 {
@@ -200,7 +184,6 @@ if (app.Environment.IsDevelopment())
 
 app.UseAuthorization();
 
-// Apply rate limiter to all controller routes
-app.MapControllers().RequireRateLimiting("global");
+app.MapControllers();
 
 app.Run();

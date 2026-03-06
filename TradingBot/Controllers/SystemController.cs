@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TradingBot.Domain.Enums;
 using TradingBot.Persistence;
-using TradingBot.Middleware;
+using TradingBot.API.Middleware;
 
 namespace TradingBot.API.Controllers
 {
@@ -58,7 +58,9 @@ namespace TradingBot.API.Controllers
 
             var tradeMonitorActive = await _db.SystemLogs!
                 .AnyAsync(l => l.Message != null
-                    && l.Message.Contains("Monitoring")
+                    && (l.Message.Contains("TradeMonitoringWorker")
+                        || l.Message.Contains("TP_HIT")
+                        || l.Message.Contains("SL_HIT"))
                     && l.CreatedAt >= fiveMinAgo);
 
             var uptime = DateTime.UtcNow - _startTime;
@@ -167,7 +169,10 @@ namespace TradingBot.API.Controllers
 
             var monitorLog = await _db.SystemLogs!
                 .AsNoTracking()
-                .Where(l => l.Message != null && l.Message.Contains("Trade Monitoring Worker"))
+                .Where(l => l.Message != null
+                         && (l.Message.Contains("TradeMonitoringWorker")
+                             || l.Message.Contains("TP_HIT")
+                             || l.Message.Contains("SL_HIT")))
                 .OrderByDescending(l => l.CreatedAt)
                 .FirstOrDefaultAsync();
 
@@ -233,3 +238,4 @@ namespace TradingBot.API.Controllers
         }
     }
 }
+

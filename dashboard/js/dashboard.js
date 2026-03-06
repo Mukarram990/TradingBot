@@ -4,12 +4,15 @@
   const { buildSortableTable, fmtNum, fmtDate, fmtDuration, esc } = window.TableKit;
   const { initPriceChart, updatePriceChart } = window.ChartKit;
 
-  const CORE_POLL_MS = 15000;
-  const HEAVY_POLL_MS = 60000;
-  const CHART_POLL_MS = 30000;
+  const CORE_POLL_MS = 5000;
+  const HEAVY_POLL_MS = 15000;
+  const CHART_POLL_MS = 15000;
   let corePollHandle = null;
   let heavyPollHandle = null;
   let chartPollHandle = null;
+  let coreRunning = false;
+  let heavyRunning = false;
+  let chartRunning = false;
   let state = { openTrades: [], closedTrades: [] };
 
   function setText(id, text) {
@@ -237,6 +240,11 @@
     const logs = wrap.data || [];
     const panel = document.getElementById("logs-panel");
     setText("logs-count", String(logs.length));
+    if (!panel) return;
+    if (!logs.length) {
+      panel.innerHTML = `<div class="log-line">No logs yet.</div>`;
+      return;
+    }
     panel.innerHTML = logs.map((l) => `
       <div class="log-line">
         <span class="${l.level === "ERROR" ? "neg" : l.level === "WARN" ? "warn" : "pos"}">[${esc(l.level)}]</span>
@@ -257,20 +265,42 @@
   }
 
   async function refreshCore() {
-    await Promise.all([
-      refreshSystem(),
-      refreshAccount(),
-      refreshTradesAndOrders(),
-      refreshSignals()
-    ]);
+    if (coreRunning) return;
+    coreRunning = true;
+    try {
+      await Promise.all([
+        refreshSystem(),
+        refreshAccount(),
+        refreshTradesAndOrders(),
+        refreshSignals()
+      ]);
+    } finally {
+      coreRunning = false;
+    }
   }
 
   async function refreshHeavy() {
-    await Promise.all([
-      refreshAiPanel(),
-      refreshRiskPanel(),
-      refreshLogs()
-    ]);
+    if (heavyRunning) return;
+    heavyRunning = true;
+    try {
+      await Promise.all([
+        refreshAiPanel(),
+        refreshRiskPanel(),
+        refreshLogs()
+      ]);
+    } finally {
+      heavyRunning = false;
+    }
+  }
+
+  async function refreshChartSafe() {
+    if (chartRunning) return;
+    chartRunning = true;
+    try {
+      await refreshChart();
+    } finally {
+      chartRunning = false;
+    }
   }
 
   function startPolling() {
@@ -280,11 +310,11 @@
 
     refreshCore();
     refreshHeavy();
-    refreshChart();
+    refreshChartSafe();
 
     corePollHandle = setInterval(refreshCore, CORE_POLL_MS);
     heavyPollHandle = setInterval(refreshHeavy, HEAVY_POLL_MS);
-    chartPollHandle = setInterval(refreshChart, CHART_POLL_MS);
+    chartPollHandle = setInterval(refreshChartSafe, CHART_POLL_MS);
   }
 
   function bindUi() {
@@ -301,7 +331,7 @@
     });
     chartBtn.addEventListener("click", (e) => {
       e.preventDefault();
-      refreshChart();
+      refreshChartSafe();
     });
   }
 

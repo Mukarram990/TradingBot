@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TradingBot.Domain.Entities;
 using TradingBot.Persistence;
-using TradingBot.Middleware;
+using TradingBot.API.Middleware;
 
 namespace TradingBot.API.Controllers
 {
@@ -54,4 +54,5 @@ namespace TradingBot.API.Controllers
         }
     }
 }
+
 

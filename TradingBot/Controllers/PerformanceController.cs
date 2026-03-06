@@ -4,7 +4,7 @@ using TradingBot.Application;
 using TradingBot.Domain.Entities;
 using TradingBot.Domain.Enums;
 using TradingBot.Persistence;
-using TradingBot.Middleware;
+using TradingBot.API.Middleware;
 
 namespace TradingBot.API.Controllers
 {
@@ -321,4 +321,5 @@ namespace TradingBot.API.Controllers
         }
     }
 }
+
 

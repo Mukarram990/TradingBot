@@ -28,6 +28,7 @@
     const mount = document.getElementById(containerId);
     if (!mount) return;
 
+    const safeRows = Array.isArray(rows) ? rows : [];
     const getCell = (row, key) => row[key];
     const tableId = `${containerId}-table`;
     const html = `
@@ -35,7 +36,11 @@
         <table id="${tableId}">
           <thead><tr>${columns.map((c) => `<th data-key="${esc(c.key)}">${esc(c.label)}</th>`).join("")}</tr></thead>
           <tbody>
-            ${rows.map((r) => `<tr>${columns.map((c) => `<td>${c.render ? c.render(r) : esc(getCell(r, c.key))}</td>`).join("")}</tr>`).join("")}
+            ${
+              safeRows.length
+                ? safeRows.map((r) => `<tr>${columns.map((c) => `<td>${c.render ? c.render(r) : esc(getCell(r, c.key))}</td>`).join("")}</tr>`).join("")
+                : `<tr><td colspan="${columns.length}" style="text-align:center;color:#88a0bd;padding:14px;">No data available</td></tr>`
+            }
           </tbody>
         </table>
       </div>`;
@@ -48,7 +53,7 @@
         const key = h.dataset.key;
         const asc = h.dataset.asc !== "true";
         h.dataset.asc = asc ? "true" : "false";
-        rows.sort((a, b) => {
+        safeRows.sort((a, b) => {
           const av = a[key];
           const bv = b[key];
           if (typeof av === "number" && typeof bv === "number") return asc ? av - bv : bv - av;
@@ -56,7 +61,7 @@
             ? String(av ?? "").localeCompare(String(bv ?? ""))
             : String(bv ?? "").localeCompare(String(av ?? ""));
         });
-        buildSortableTable(containerId, columns, rows);
+        buildSortableTable(containerId, columns, safeRows);
       });
     });
   }
