@@ -113,15 +113,17 @@ const Charts = (() => {
     });
 
     // Handle resize
-    const ro = new ResizeObserver(() => {
-      if (candleChart) {
-        candleChart.applyOptions({
-          width:  container.clientWidth,
-          height: container.clientHeight,
-        });
-      }
-    });
-    ro.observe(container);
+    if (typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(() => {
+        if (candleChart) {
+          candleChart.applyOptions({
+            width:  container.clientWidth,
+            height: container.clientHeight,
+          });
+        }
+      });
+      ro.observe(container);
+    }
 
     loadCandleData();
     return candleChart;
@@ -213,6 +215,7 @@ const Charts = (() => {
      RSI PANEL
   ══════════════════════════════════════ */
   function initRSIChart(containerId) {
+    if (typeof Chart === "undefined") return;
     const container = document.getElementById(containerId);
     if (!container) return;
 
@@ -258,6 +261,7 @@ const Charts = (() => {
      PnL CHART
   ══════════════════════════════════════ */
   function initPnLChart(containerId, trades) {
+    if (typeof Chart === "undefined") return;
     const container = document.getElementById(containerId);
     if (!container) return;
 
@@ -344,6 +348,7 @@ const Charts = (() => {
      WIN RATE DOUGHNUT
   ══════════════════════════════════════ */
   function initWinRateChart(containerId, winRate) {
+    if (typeof Chart === "undefined") return;
     const container = document.getElementById(containerId);
     if (!container) return;
 
@@ -410,6 +415,7 @@ const Charts = (() => {
      FALLBACK CHART (Chart.js)
   ══════════════════════════════════════ */
   function initFallbackChart(containerId) {
+    if (typeof Chart === "undefined") return;
     const container = document.getElementById(containerId);
     if (!container) return;
 

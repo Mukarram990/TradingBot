@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Linq;
 using TradingBot.Domain.Entities;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Interfaces;
@@ -27,6 +28,17 @@ namespace TradingBot.Infrastructure.AI
         private readonly ILogger<OpenRouterAIService> _logger;
 
         private const string BaseUrl = "https://openrouter.ai/api/v1/chat/completions";
+        private const string ModelsUrl = "https://openrouter.ai/api/v1/models";
+
+        private static readonly string[] PreferredFreeModels = new[]
+        {
+            "google/gemma-2-9b-it:free",
+            "mistralai/mistral-7b-instruct:free",
+            "meta-llama/llama-3.1-8b-instruct:free"
+        };
+
+        private string? _resolvedModel;
+        private bool _modelChecked;
 
         public OpenRouterAIService(HttpClient http, IOptions<AiOptions> opts, ILogger<OpenRouterAIService> logger)
         {
@@ -58,9 +70,11 @@ namespace TradingBot.Infrastructure.AI
             request.Headers.Add("HTTP-Referer", "https://github.com/Mukarram990/TradingBot");
             request.Headers.Add("X-Title", "TradingBot");
 
+            var model = await ResolveOpenRouterModelAsync();
+
             var body = JsonSerializer.Serialize(new
             {
-                model = _opts.OpenRouterModel,
+                model,
                 messages = new[]
                 {
                     new { role = "system",
@@ -78,7 +92,26 @@ namespace TradingBot.Infrastructure.AI
                 response.StatusCode == HttpStatusCode.PaymentRequired)
                 throw new AiRateLimitException("OpenRouter rate limit / free quota exceeded.");
 
-            response.EnsureSuccessStatusCode();
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+
+                if (response.StatusCode == HttpStatusCode.NotFound &&
+                    error.Contains("No endpoints found", StringComparison.OrdinalIgnoreCase))
+                {
+                    var fallback = await ResolveOpenRouterModelAsync(forceRefresh: true, ignoreConfigured: true);
+                    if (!string.IsNullOrWhiteSpace(fallback) && fallback != model)
+                    {
+                        _logger.LogWarning(
+                            "OpenRouter model {Model} unavailable. Falling back to {Fallback}.",
+                            model, fallback);
+                        return await CallOpenRouterAsync(userPrompt);
+                    }
+                }
+
+                throw new HttpRequestException(
+                    $"OpenRouter error {(int)response.StatusCode}: {error}. Model={model}");
+            }
 
             var json = await response.Content.ReadAsStringAsync();
             var doc = JsonDocument.Parse(json);
@@ -105,6 +138,70 @@ namespace TradingBot.Infrastructure.AI
                 "Market regime for {0}: RSI={1:F1}, Trend={2}, ATR={3:F4}. " +
                 "JSON: {{\"regime\":\"Trending or Ranging or Volatile or Bearish\"}}",
                 symbol, s.RSI, s.Trend, s.ATR);
+
+        private async Task<string> ResolveOpenRouterModelAsync(
+            bool forceRefresh = false,
+            bool ignoreConfigured = false)
+        {
+            if (!forceRefresh && _modelChecked && !string.IsNullOrWhiteSpace(_resolvedModel))
+                return _resolvedModel!;
+
+            _modelChecked = true;
+
+            if (!ignoreConfigured && !string.IsNullOrWhiteSpace(_opts.OpenRouterModel))
+            {
+                _resolvedModel = _opts.OpenRouterModel;
+                return _resolvedModel;
+            }
+
+            try
+            {
+                var req = new HttpRequestMessage(HttpMethod.Get, ModelsUrl);
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _opts.OpenRouterApiKey);
+                var resp = await _http.SendAsync(req);
+                if (!resp.IsSuccessStatusCode)
+                {
+                    _resolvedModel = _opts.OpenRouterModel;
+                    return _resolvedModel ?? string.Empty;
+                }
+
+                var json = await resp.Content.ReadAsStringAsync();
+                var doc = JsonDocument.Parse(json);
+
+                var ids = doc.RootElement
+                    .GetProperty("data")
+                    .EnumerateArray()
+                    .Select(m => m.GetProperty("id").GetString())
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Cast<string>()
+                    .ToList();
+
+                foreach (var pref in PreferredFreeModels)
+                {
+                    if (ids.Contains(pref))
+                    {
+                        _resolvedModel = pref;
+                        return _resolvedModel;
+                    }
+                }
+
+                var free = ids.FirstOrDefault(id => id.EndsWith(":free", StringComparison.OrdinalIgnoreCase));
+                if (!string.IsNullOrWhiteSpace(free))
+                {
+                    _resolvedModel = free;
+                    return _resolvedModel;
+                }
+
+                _resolvedModel = ids.FirstOrDefault() ?? _opts.OpenRouterModel;
+                return _resolvedModel ?? string.Empty;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "OpenRouter model discovery failed. Using configured model.");
+                _resolvedModel = _opts.OpenRouterModel;
+                return _resolvedModel ?? string.Empty;
+            }
+        }
 
         private AISignalResult ParseSignalResponse(string raw)
         {

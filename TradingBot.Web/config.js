@@ -3,9 +3,13 @@
    CryptoBot Dashboard v2
    ============================================================ */
 
+const _rawApiBase = localStorage.getItem("tb_v2_api_base_url") || "https://localhost:5001/api";
+const _cleanApiBase = _rawApiBase.replace(/\/+$/, "");
+const _apiBase = _cleanApiBase.endsWith("/api") ? _cleanApiBase : `${_cleanApiBase}/api`;
+
 const CONFIG = {
   /* ── API ── */
-  API_BASE_URL: localStorage.getItem("tb_v2_api_base_url") || "https://localhost:7282/api",
+  API_BASE_URL: _apiBase,
   API_KEY: localStorage.getItem("tb_v2_api_key") || "",
   WS_URL: "wss://localhost:5001/ws",
 
@@ -28,6 +32,7 @@ const CONFIG = {
   MAX_SIGNAL_ENTRIES: 50,
   TOAST_DURATION:     4000,
   DATE_LOCALE:        "en-US",
+  USE_PUBLIC_MARKET_DATA: true,
 
   /* ── Endpoints ── */
   ENDPOINTS: {
@@ -55,6 +60,12 @@ const CONFIG = {
     // AI
     aiVerifications:    "/ai/responses/latest",
     aiStatus:           "/ai/status",
+
+    // Strategy
+    strategyMode:       "/strategy/mode",
+    strategyCustom:     "/strategy/custom",
+    strategyActivate:   (id) => `/strategy/custom/${id}/activate`,
+    strategyDeactivate: (id) => `/strategy/custom/${id}/deactivate`,
 
     // Risk
     riskProfile:        "/risk/profile",

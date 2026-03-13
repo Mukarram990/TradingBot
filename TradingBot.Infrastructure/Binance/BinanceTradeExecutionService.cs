@@ -10,6 +10,7 @@ using TradingBot.Infrastructure.Binance.Models;
 using TradingBot.Persistence;
 using System.Globalization;
 using Microsoft.Extensions.Logging;
+using TradingBot.Infrastructure.Services;
 
 namespace TradingBot.Infrastructure.Binance
 {
@@ -23,6 +24,7 @@ namespace TradingBot.Infrastructure.Binance
         private readonly BinanceAccountService _accountService;
         private readonly IRiskManagementService _risk;
         private readonly ILogger<BinanceTradeExecutionService> _logger;
+        private readonly TradingOptions _tradeOpts;
 
 
         public BinanceTradeExecutionService(
@@ -31,7 +33,8 @@ namespace TradingBot.Infrastructure.Binance
             TradingBotDbContext dbContext,
             IRiskManagementService risk,
             BinanceAccountService accountService,
-            ILogger<BinanceTradeExecutionService> logger)
+            ILogger<BinanceTradeExecutionService> logger,
+            IOptions<TradingOptions> tradeOptions)
         {
             _httpClient = httpClient;
             _options = options.Value;
@@ -39,6 +42,7 @@ namespace TradingBot.Infrastructure.Binance
             _risk = risk;
             _accountService = accountService;
             _logger = logger;
+            _tradeOpts = tradeOptions.Value;
 
             _httpClient.BaseAddress = new Uri(_options.BaseUrl);
             _signatureService = new BinanceSignatureService(_options.ApiSecret);
@@ -48,6 +52,12 @@ namespace TradingBot.Infrastructure.Binance
 
         public async Task<Order> OpenTradeAsync(TradeSignal signal)
         {
+            if (string.IsNullOrWhiteSpace(_options.ApiKey) || string.IsNullOrWhiteSpace(_options.ApiSecret))
+            {
+                _logger.LogError("Binance API credentials are missing. Configure Binance:ApiKey and Binance:ApiSecret.");
+                throw new Exception("Binance API credentials are missing.");
+            }
+
             // ?? 1?? Max trades per day
             if (!_risk.CanTradeToday())
                 throw new Exception("Max trades per day reached.");
@@ -66,6 +76,7 @@ namespace TradingBot.Infrastructure.Binance
 
             if (accountBalance <= 0)
                 throw new Exception("Insufficient USDT balance.");
+            signal.AccountBalance = accountBalance;
 
             // ADD: Daily loss limit check
             var startingBalance = await _risk.GetDailyStartingBalanceAsync();
@@ -87,6 +98,19 @@ namespace TradingBot.Infrastructure.Binance
 
             if (signal.Action != TradeAction.Buy)
                 throw new InvalidOperationException("Only BUY entry is supported in this method.");
+
+            if (_tradeOpts.UseProfitTarget)
+            {
+                var adjustedTp = TryApplyProfitTarget(signal);
+                if (adjustedTp.HasValue)
+                {
+                    signal.TakeProfit = adjustedTp.Value;
+                    _logger.LogInformation(
+                        "Adjusted TP for {Symbol} to target ${Min}-${Max} profit (RR bounds {MinRR}-{MaxRR}). TP={TP}",
+                        signal.Symbol, _tradeOpts.ProfitTargetMinUsd, _tradeOpts.ProfitTargetMaxUsd,
+                        _tradeOpts.MinRewardRiskMultiple, _tradeOpts.MaxRewardRiskMultiple, signal.TakeProfit);
+                }
+            }
 
             // 1?? Create Trade (Position)
             var trade = new Trade
@@ -157,6 +181,17 @@ namespace TradingBot.Infrastructure.Binance
             if (executedPrice.HasValue)
             {
                 trade.EntryPrice = executedPrice.Value;
+                if (_tradeOpts.AdjustStopsToFillPrice)
+                {
+                    var delta = executedPrice.Value - signal.EntryPrice;
+                    trade.StopLoss = Math.Round(signal.StopLoss + delta, 8);
+                    trade.TakeProfit = Math.Round(signal.TakeProfit + delta, 8);
+
+                    if (trade.StopLoss >= trade.EntryPrice)
+                        trade.StopLoss = Math.Round(trade.EntryPrice * 0.99m, 8);
+                    if (trade.TakeProfit <= trade.EntryPrice)
+                        trade.TakeProfit = Math.Round(trade.EntryPrice * 1.02m, 8);
+                }
                 _dbContext.Trades.Update(trade);
             }
 
@@ -179,6 +214,38 @@ namespace TradingBot.Infrastructure.Binance
                 trade.Symbol, trade.ID, order.ExternalOrderId, trade.Quantity, trade.EntryPrice);
 
             return order;
+        }
+
+        private decimal? TryApplyProfitTarget(TradeSignal signal)
+        {
+            if (signal.Action != TradeAction.Buy)
+                return null;
+
+            var riskPerUnit = signal.EntryPrice - signal.StopLoss;
+            if (riskPerUnit <= 0m || signal.Quantity <= 0m)
+                return null;
+
+            var targetUsd = (_tradeOpts.ProfitTargetMinUsd + _tradeOpts.ProfitTargetMaxUsd) / 2m;
+            var maxTarget = _tradeOpts.ProfitTargetMaxUsd;
+            var minTarget = _tradeOpts.ProfitTargetMinUsd;
+
+            if (minTarget <= 0m || maxTarget <= 0m || maxTarget < minTarget)
+                return null;
+
+            // Start with midpoint target and clamp by RR bounds.
+            var desiredTarget = ClampDecimal(targetUsd, minTarget, maxTarget);
+            var rewardMultiple = desiredTarget / (riskPerUnit * signal.Quantity);
+            rewardMultiple = ClampDecimal(rewardMultiple, _tradeOpts.MinRewardRiskMultiple, _tradeOpts.MaxRewardRiskMultiple);
+
+            var tp = signal.EntryPrice + (riskPerUnit * rewardMultiple);
+            return Math.Round(tp, 8);
+        }
+
+        private static decimal ClampDecimal(decimal value, decimal min, decimal max)
+        {
+            if (value < min) return min;
+            if (value > max) return max;
+            return value;
         }
 
         private async Task<decimal> NormalizeOrderQuantityAsync(string symbol, decimal requestedQuantity, decimal referencePrice)

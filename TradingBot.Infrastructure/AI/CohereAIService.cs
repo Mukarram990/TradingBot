@@ -79,7 +79,11 @@ namespace TradingBot.Infrastructure.AI
             if (response.StatusCode == HttpStatusCode.PaymentRequired)
                 throw new AiRateLimitException("Cohere free quota exhausted.");
 
-            response.EnsureSuccessStatusCode();
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                throw new HttpRequestException($"Cohere error {(int)response.StatusCode}: {error}");
+            }
 
             var json = await response.Content.ReadAsStringAsync();
             var doc = JsonDocument.Parse(json);

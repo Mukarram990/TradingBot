@@ -1,9 +1,12 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Microsoft.EntityFrameworkCore;
 using TradingBot.Domain.Entities;
 using TradingBot.Domain.Interfaces;
 using TradingBot.Infrastructure.AI;
+using TradingBot.Infrastructure.Services;
 using TradingBot.Persistence;
 
 namespace TradingBot.API.Workers
@@ -27,22 +30,28 @@ namespace TradingBot.API.Workers
     {
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<SignalGenerationWorker> _logger;
-        private readonly TimeSpan _interval = TimeSpan.FromMinutes(5);
+        private readonly TimeSpan _interval;
         private readonly TimeSpan _initialDelay = TimeSpan.FromSeconds(30);
+        private readonly TradingOptions _opts;
 
         public SignalGenerationWorker(
             IServiceProvider serviceProvider,
-            ILogger<SignalGenerationWorker> logger)
+            ILogger<SignalGenerationWorker> logger,
+            IOptions<TradingOptions> options)
         {
             _serviceProvider = serviceProvider;
             _logger = logger;
+            _opts = options.Value;
+            _interval = TimeSpan.FromMinutes(Math.Max(1, _opts.SignalScanIntervalMinutes));
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             _logger.LogInformation(
-                "Signal Generation Worker started (AI-enhanced). First scan in {Delay}s, then every {Interval}.",
-                _initialDelay.TotalSeconds, _interval);
+                "Signal Generation Worker started (AI-enhanced). First scan in {Delay}s, then every {Interval}. " +
+                "Timeframe={Timeframe}, CandleCount={Count}",
+                _initialDelay.TotalSeconds, _interval,
+                _opts.SignalScanTimeframe, _opts.ScanCandleCount);
 
             await Task.Delay(_initialDelay, stoppingToken);
 
@@ -99,7 +108,9 @@ namespace TradingBot.API.Workers
             List<IndicatorSnapshot> snapshots;
             try
             {
-                snapshots = await scanner.ScanAllPairsAsync("1h", 100);
+                var timeframe = string.IsNullOrWhiteSpace(_opts.SignalScanTimeframe) ? "1h" : _opts.SignalScanTimeframe;
+                var candleCount = _opts.ScanCandleCount > 0 ? _opts.ScanCandleCount : 100;
+                snapshots = await scanner.ScanAllPairsAsync(timeframe, candleCount);
                 _logger.LogInformation("SignalGenerationWorker: scanned {Count} pairs.", snapshots.Count);
             }
             catch (Exception ex)
@@ -193,6 +204,42 @@ namespace TradingBot.API.Workers
                 _logger.LogWarning(
                     "SignalGenerationWorker: circuit breaker triggered after signal for {Symbol}. Stopping.", snapshot.Symbol);
                 return (sig, trd);
+            }
+
+            // ── Pacing controls (avoid rapid-fire trades) ───────────────────
+            var now = DateTime.UtcNow;
+            if (_opts.MaxTradesPerMinute > 0)
+            {
+                var oneMinAgo = now.AddMinutes(-1);
+                var recentCount = await db.Trades!
+                    .CountAsync(t => t.EntryTime >= oneMinAgo, ct);
+                if (recentCount >= _opts.MaxTradesPerMinute)
+                {
+                    var msg = $"SignalGenerationWorker: pacing limit hit ({recentCount}/{_opts.MaxTradesPerMinute} trades in last minute). Skipping {snapshot.Symbol}.";
+                    _logger.LogWarning(msg);
+                    await WriteLogAsync(db, "WARN", msg);
+                    return (sig, trd);
+                }
+            }
+
+            if (_opts.MinSecondsBetweenTrades > 0)
+            {
+                var lastTradeTime = await db.Trades!
+                    .OrderByDescending(t => t.EntryTime)
+                    .Select(t => t.EntryTime)
+                    .FirstOrDefaultAsync(ct);
+
+                if (lastTradeTime != default)
+                {
+                    var secondsSince = (now - lastTradeTime).TotalSeconds;
+                    if (secondsSince < _opts.MinSecondsBetweenTrades)
+                    {
+                        var msg = $"SignalGenerationWorker: min spacing hit ({secondsSince:F0}s < {_opts.MinSecondsBetweenTrades}s). Skipping {snapshot.Symbol}.";
+                        _logger.LogInformation(msg);
+                        await WriteLogAsync(db, "INFO", msg);
+                        return (sig, trd);
+                    }
+                }
             }
 
             // ── Execute trade ────────────────────────────────────────────

@@ -17,6 +17,7 @@ namespace TradingBot.Persistence
         public DbSet<RiskProfile>? RiskProfiles { get; set; }
         public DbSet<MarketRegime>? MarketRegimes { get; set; }
         public DbSet<UserAccount>? UserAccounts { get; set; } 
+        public DbSet<Strategy>? Strategies { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

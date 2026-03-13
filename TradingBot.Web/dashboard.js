@@ -146,6 +146,7 @@ function navigateTo(view) {
     case "risk":       loadRiskView();       break;
     case "signals":    loadSignalsView();    break;
     case "heatmap":    loadHeatmapView();    break;
+    case "strategybuilder": loadStrategyBuilderView(); break;
     case "settings":   loadSettingsView();   break;
   }
 }
@@ -275,6 +276,11 @@ async function loadSettingsView() {
   renderSettings();
 }
 
+async function loadStrategyBuilderView() {
+  renderStrategyBuilder();
+  loadCustomStrategies();
+}
+
 /* ══════════════════════════════════════
    RIGHT PANEL
 ══════════════════════════════════════ */
@@ -366,7 +372,12 @@ async function loadSymbolTabs() {
       .join("");
   }
 
-  const tickers = await ApiClient.getBinanceAllTickers(CONFIG.WATCH_SYMBOLS);
+  let tickers = {};
+  try {
+    tickers = await ApiClient.getBinanceAllTickers(CONFIG.WATCH_SYMBOLS);
+  } catch {
+    tickers = {};
+  }
 
   if (bar) bar.innerHTML = CONFIG.WATCH_SYMBOLS.map(sym => {
     const t   = tickers[sym];
@@ -496,6 +507,63 @@ function renderSettings() {
 
       <div class="card">
         <div class="card-header">
+          <div class="card-title"><span class="title-dot purple"></span>Strategy Mode</div>
+        </div>
+        <div class="card-body">
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <div class="input-group">
+              <label class="input-label">Mode</label>
+              <select class="select-field" id="set-strategy-mode">
+                ${["Strict","Relaxed","Momentum","Hybrid"].map(m => `
+                  <option value="${m}" ${getStrategyMode() === m ? "selected" : ""}>${m}</option>
+                `).join("")}
+              </select>
+            </div>
+            <div class="input-group">
+              <label class="input-label">RSI Oversold (Strict)</label>
+              <input class="input-field" type="number" step="0.1" min="10" max="70"
+                id="set-rsi-oversold" value="${getStrategyNumber("rsi_oversold", 45)}">
+            </div>
+            <div class="input-group">
+              <label class="input-label">RSI Overbought (Disqualify)</label>
+              <input class="input-field" type="number" step="0.1" min="50" max="90"
+                id="set-rsi-overbought" value="${getStrategyNumber("rsi_overbought", 70)}">
+            </div>
+            <div class="input-group">
+              <label class="input-label">RSI Relaxed Max</label>
+              <input class="input-field" type="number" step="0.1" min="45" max="70"
+                id="set-rsi-relaxed-max" value="${getStrategyNumber("rsi_relaxed_max", 55)}">
+            </div>
+            <div class="input-group">
+              <label class="input-label">RSI Momentum Min</label>
+              <input class="input-field" type="number" step="0.1" min="45" max="80"
+                id="set-rsi-momentum-min" value="${getStrategyNumber("rsi_momentum_min", 55)}">
+            </div>
+            <div class="input-group">
+              <label class="input-label">RSI Momentum Max</label>
+              <input class="input-field" type="number" step="0.1" min="55" max="90"
+                id="set-rsi-momentum-max" value="${getStrategyNumber("rsi_momentum_max", 70)}">
+            </div>
+            <div class="input-group">
+              <label class="input-label">Momentum Requires Volume Spike</label>
+              <select class="select-field" id="set-momentum-volume-spike">
+                ${[
+                  { v: "true",  label: "Yes" },
+                  { v: "false", label: "No" }
+                ].map(o => `
+                  <option value="${o.v}" ${getStrategyBool("momentum_volume_spike", true) === (o.v === "true") ? "selected" : ""}>
+                    ${o.label}
+                  </option>
+                `).join("")}
+              </select>
+            </div>
+            <button class="btn btn-outline btn-sm" onclick="saveStrategyMode()">Apply Strategy</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
           <div class="card-title"><span class="title-dot red"></span>Keyboard Shortcuts</div>
         </div>
         <div class="card-body">
@@ -519,6 +587,114 @@ function renderSettings() {
             `).join("")}
           </div>
         </div>
+      </div>
+    </div>
+
+  `;
+
+  initStrategyModeControls();
+  loadStrategySettings();
+}
+
+function renderStrategyBuilder() {
+  const el = document.getElementById("strategy-builder-container");
+  if (!el) return;
+
+  el.innerHTML = `
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-header">
+        <div class="card-title"><span class="title-dot"></span>Create Strategy</div>
+      </div>
+      <div class="card-body">
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:12px;">
+          <div class="input-group">
+            <label class="input-label">Name</label>
+            <input class="input-field" id="strat-name" placeholder="EMA 20/50 Crossover">
+          </div>
+          <div class="input-group">
+            <label class="input-label">Type</label>
+            <select class="select-field" id="strat-type">
+              <option value="ema_crossover">EMA Crossover</option>
+            </select>
+          </div>
+          <div class="input-group">
+            <label class="input-label">Weight (higher = preferred)</label>
+            <input class="input-field" type="number" min="0.1" max="10" step="0.1" id="strat-weight" value="1.0">
+          </div>
+          <div class="input-group">
+            <label class="input-label">Fast EMA</label>
+            <input class="input-field" type="number" min="2" max="200" id="strat-fast-ema" value="20">
+            <div class="text-xs text-muted">Only EMA20/EMA50 available right now.</div>
+          </div>
+          <div class="input-group">
+            <label class="input-label">Slow EMA</label>
+            <input class="input-field" type="number" min="5" max="400" id="strat-slow-ema" value="50">
+          </div>
+          <div class="input-group">
+            <label class="input-label">Min Confidence</label>
+            <input class="input-field" type="number" min="1" max="100" id="strat-min-confidence" value="70">
+          </div>
+          <div class="input-group">
+            <label class="input-label">Use RSI</label>
+            <select class="select-field" id="strat-use-rsi">
+              <option value="true">Yes</option>
+              <option value="false">No</option>
+            </select>
+          </div>
+          <div class="input-group">
+            <label class="input-label">RSI Min</label>
+            <input class="input-field" type="number" min="10" max="90" step="0.1" id="strat-rsi-min" value="45">
+          </div>
+          <div class="input-group">
+            <label class="input-label">RSI Max</label>
+            <input class="input-field" type="number" min="10" max="90" step="0.1" id="strat-rsi-max" value="70">
+          </div>
+          <div class="input-group">
+            <label class="input-label">Use MACD</label>
+            <select class="select-field" id="strat-use-macd">
+              <option value="true">Yes</option>
+              <option value="false">No</option>
+            </select>
+          </div>
+          <div class="input-group">
+            <label class="input-label">MACD Min</label>
+            <input class="input-field" type="number" step="0.0001" id="strat-macd-min" value="0">
+          </div>
+          <div class="input-group">
+            <label class="input-label">Use ATR</label>
+            <select class="select-field" id="strat-use-atr">
+              <option value="false">No</option>
+              <option value="true">Yes</option>
+            </select>
+          </div>
+          <div class="input-group">
+            <label class="input-label">ATR Min</label>
+            <input class="input-field" type="number" step="0.0001" id="strat-atr-min" value="0">
+          </div>
+          <div class="input-group">
+            <label class="input-label">Require Volume Spike</label>
+            <select class="select-field" id="strat-require-volume">
+              <option value="false">No</option>
+              <option value="true">Yes</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-secondary);">
+            <input type="checkbox" id="strat-activate" checked>
+            Activate on save
+          </label>
+          <button class="btn btn-primary btn-sm" onclick="createCustomStrategy()">Save Strategy</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title"><span class="title-dot green"></span>Saved Strategies</div>
+      </div>
+      <div class="card-body">
+        <div id="strategy-list"></div>
       </div>
     </div>
   `;
@@ -550,9 +726,222 @@ function saveSymbols() {
   }
 }
 
+function getStrategyNumber(key, fallback) {
+  const v = localStorage.getItem(`tb_v2_${key}`);
+  const n = v !== null ? Number(v) : fallback;
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function getStrategyBool(key, fallback) {
+  const v = localStorage.getItem(`tb_v2_${key}`);
+  if (v === null) return fallback;
+  return v === "true";
+}
+
+function getStrategyMode() {
+  return localStorage.getItem("tb_v2_strategy_mode") || "Strict";
+}
+
+function getStrategyDefaults(mode) {
+  switch ((mode || "Strict").toLowerCase()) {
+    case "relaxed":
+      return { rsiOversold: 50, rsiOverbought: 75, relaxedRsiMax: 60, momentumRsiMin: 55, momentumRsiMax: 70, requireVolumeSpike: true };
+    case "momentum":
+      return { rsiOversold: 45, rsiOverbought: 75, relaxedRsiMax: 55, momentumRsiMin: 55, momentumRsiMax: 75, requireVolumeSpike: true };
+    case "hybrid":
+      return { rsiOversold: 45, rsiOverbought: 70, relaxedRsiMax: 55, momentumRsiMin: 55, momentumRsiMax: 70, requireVolumeSpike: true };
+    case "strict":
+    default:
+      return { rsiOversold: 45, rsiOverbought: 70, relaxedRsiMax: 55, momentumRsiMin: 55, momentumRsiMax: 70, requireVolumeSpike: true };
+  }
+}
+
+function applyStrategyDefaults(mode) {
+  const d = getStrategyDefaults(mode);
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = String(v); };
+  setVal("set-rsi-oversold", d.rsiOversold);
+  setVal("set-rsi-overbought", d.rsiOverbought);
+  setVal("set-rsi-relaxed-max", d.relaxedRsiMax);
+  setVal("set-rsi-momentum-min", d.momentumRsiMin);
+  setVal("set-rsi-momentum-max", d.momentumRsiMax);
+  const spike = document.getElementById("set-momentum-volume-spike");
+  if (spike) spike.value = d.requireVolumeSpike ? "true" : "false";
+}
+
+function initStrategyModeControls() {
+  const modeSelect = document.getElementById("set-strategy-mode");
+  if (!modeSelect) return;
+  modeSelect.addEventListener("change", () => applyStrategyDefaults(modeSelect.value));
+}
+
+async function loadStrategySettings() {
+  try {
+    const s = await ApiClient.fetchStrategyMode();
+    if (!s) return;
+    document.getElementById("set-strategy-mode").value = s.mode || "Strict";
+    document.getElementById("set-rsi-oversold").value = s.rsiOversold ?? 45;
+    document.getElementById("set-rsi-overbought").value = s.rsiOverbought ?? 70;
+    document.getElementById("set-rsi-relaxed-max").value = s.relaxedRsiMax ?? 55;
+    document.getElementById("set-rsi-momentum-min").value = s.momentumRsiMin ?? 55;
+    document.getElementById("set-rsi-momentum-max").value = s.momentumRsiMax ?? 70;
+    document.getElementById("set-momentum-volume-spike").value =
+      (s.requireVolumeSpikeForMomentum ?? true) ? "true" : "false";
+
+    localStorage.setItem("tb_v2_strategy_mode", s.mode || "Strict");
+    localStorage.setItem("tb_v2_rsi_oversold", String(s.rsiOversold ?? 45));
+    localStorage.setItem("tb_v2_rsi_overbought", String(s.rsiOverbought ?? 70));
+    localStorage.setItem("tb_v2_rsi_relaxed_max", String(s.relaxedRsiMax ?? 55));
+    localStorage.setItem("tb_v2_rsi_momentum_min", String(s.momentumRsiMin ?? 55));
+    localStorage.setItem("tb_v2_rsi_momentum_max", String(s.momentumRsiMax ?? 70));
+    localStorage.setItem("tb_v2_momentum_volume_spike", String(s.requireVolumeSpikeForMomentum ?? true));
+  } catch {
+    // If backend is unreachable, keep local defaults
+  }
+}
+
+async function saveStrategyMode() {
+  const mode = document.getElementById("set-strategy-mode")?.value || "Strict";
+  const rsiOversold = Number(document.getElementById("set-rsi-oversold")?.value || 45);
+  const rsiOverbought = Number(document.getElementById("set-rsi-overbought")?.value || 70);
+  const rsiRelaxedMax = Number(document.getElementById("set-rsi-relaxed-max")?.value || 55);
+  const rsiMomentumMin = Number(document.getElementById("set-rsi-momentum-min")?.value || 55);
+  const rsiMomentumMax = Number(document.getElementById("set-rsi-momentum-max")?.value || 70);
+  const requireVolumeSpike = (document.getElementById("set-momentum-volume-spike")?.value || "true") === "true";
+  localStorage.setItem("tb_v2_strategy_mode", mode);
+  localStorage.setItem("tb_v2_rsi_oversold", String(rsiOversold));
+  localStorage.setItem("tb_v2_rsi_overbought", String(rsiOverbought));
+  localStorage.setItem("tb_v2_rsi_relaxed_max", String(rsiRelaxedMax));
+  localStorage.setItem("tb_v2_rsi_momentum_min", String(rsiMomentumMin));
+  localStorage.setItem("tb_v2_rsi_momentum_max", String(rsiMomentumMax));
+  localStorage.setItem("tb_v2_momentum_volume_spike", String(requireVolumeSpike));
+
+  try {
+    await ApiClient.updateStrategyMode({
+      mode,
+      rsiOversold,
+      rsiOverbought,
+      relaxedRsiMax: rsiRelaxedMax,
+      momentumRsiMin: rsiMomentumMin,
+      momentumRsiMax: rsiMomentumMax,
+      requireVolumeSpikeForMomentum: requireVolumeSpike
+    });
+    UI.toast("Strategy Updated", `Mode ${mode} applied`, "success");
+    Logs.add(`Strategy updated: mode=${mode}, RSI strict<${rsiOversold}, relaxed<${rsiRelaxedMax}, momentum=${rsiMomentumMin}-${rsiMomentumMax}, volSpike=${requireVolumeSpike}`, "INFO");
+  } catch (err) {
+    UI.toast("Strategy Update Failed", err.message, "error");
+  }
+}
+
+async function createCustomStrategy() {
+  const name = document.getElementById("strat-name")?.value || "Custom Strategy";
+  const type = document.getElementById("strat-type")?.value || "ema_crossover";
+  const weight = Number(document.getElementById("strat-weight")?.value || 1);
+  const fastEma = Number(document.getElementById("strat-fast-ema")?.value || 20);
+  const slowEma = Number(document.getElementById("strat-slow-ema")?.value || 50);
+  const requireVolumeSpike = (document.getElementById("strat-require-volume")?.value || "false") === "true";
+  const minConfidence = Number(document.getElementById("strat-min-confidence")?.value || 70);
+  const useRsi = (document.getElementById("strat-use-rsi")?.value || "true") === "true";
+  const rsiMin = Number(document.getElementById("strat-rsi-min")?.value || 45);
+  const rsiMax = Number(document.getElementById("strat-rsi-max")?.value || 70);
+  const useMacd = (document.getElementById("strat-use-macd")?.value || "true") === "true";
+  const macdMin = Number(document.getElementById("strat-macd-min")?.value || 0);
+  const useAtr = (document.getElementById("strat-use-atr")?.value || "false") === "true";
+  const atrMin = Number(document.getElementById("strat-atr-min")?.value || 0);
+  const activate = !!document.getElementById("strat-activate")?.checked;
+
+  try {
+    await ApiClient.createStrategy({
+      name,
+      type,
+      weight,
+      fastEma,
+      slowEma,
+      useRsi,
+      rsiMin,
+      rsiMax,
+      useMacd,
+      macdMin,
+      useAtr,
+      atrMin,
+      requireVolumeSpike,
+      minConfidence,
+      activate
+    });
+    UI.toast("Strategy Saved", `${name} saved`, "success");
+    Logs.add(`Custom strategy saved: ${name} (${type})`, "INFO");
+    loadCustomStrategies();
+  } catch (err) {
+    UI.toast("Strategy Save Failed", err.message, "error");
+  }
+}
+
+async function loadCustomStrategies() {
+  const el = document.getElementById("strategy-list");
+  if (!el) return;
+  try {
+    const res = await ApiClient.fetchStrategies();
+    const list = res.data || [];
+    if (!list.length) {
+      el.innerHTML = `<div class="text-xs text-muted">No saved strategies yet.</div>`;
+      return;
+    }
+    el.innerHTML = list.map(s => {
+      let weight = 1;
+      try {
+        const def = JSON.parse(s.description || "{}");
+        weight = Number(def.weight || 1);
+      } catch {}
+      return `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px;border:1px solid var(--border-subtle);border-radius:6px;margin-bottom:6px;">
+          <div>
+            <div style="font-weight:700;font-size:12px;">${s.name || "Strategy"}</div>
+            <div class="text-xs text-muted">Type: ${s.version || "ema_crossover"} • MinConf: ${s.minConfidenceRequired || 70} • Weight: ${weight}</div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            ${s.isActive ? `<span class="badge badge-green">Active</span>` : ""}
+            ${s.isActive
+              ? `<button class="btn btn-ghost btn-sm" onclick="deactivateCustomStrategy(${s.id})">Deactivate</button>`
+              : `<button class="btn btn-outline btn-sm" onclick="activateCustomStrategy(${s.id})">Activate</button>`
+            }
+          </div>
+        </div>
+      `;
+    }).join("");
+  } catch {
+    el.innerHTML = `<div class="text-xs text-muted">Unable to load strategies.</div>`;
+  }
+}
+
+async function activateCustomStrategy(id) {
+  try {
+    await ApiClient.activateStrategy(id);
+    UI.toast("Strategy Activated", `Strategy ${id} is active`, "success");
+    Logs.add(`Custom strategy activated: ${id}`, "INFO");
+    loadCustomStrategies();
+  } catch (err) {
+    UI.toast("Activation Failed", err.message, "error");
+  }
+}
+
+async function deactivateCustomStrategy(id) {
+  try {
+    await ApiClient.deactivateStrategy(id);
+    UI.toast("Strategy Deactivated", `Strategy ${id} stopped`, "success");
+    Logs.add(`Custom strategy deactivated: ${id}`, "INFO");
+    loadCustomStrategies();
+  } catch (err) {
+    UI.toast("Deactivation Failed", err.message, "error");
+  }
+}
+
 window.saveAPISettings    = saveAPISettings;
 window.savePollingSettings = savePollingSettings;
 window.saveSymbols        = saveSymbols;
+window.saveStrategyMode   = saveStrategyMode;
+window.createCustomStrategy = createCustomStrategy;
+window.activateCustomStrategy = activateCustomStrategy;
+window.deactivateCustomStrategy = deactivateCustomStrategy;
+window.loadStrategyBuilderView = loadStrategyBuilderView;
 
 /* ══════════════════════════════════════
    CLOCK

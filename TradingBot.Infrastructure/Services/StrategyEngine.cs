@@ -4,6 +4,7 @@ using TradingBot.Domain.Entities;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Interfaces;
 using TradingBot.Persistence;
+using System.Text.Json;
 
 namespace TradingBot.Infrastructure.Services
 {
@@ -42,45 +43,21 @@ namespace TradingBot.Infrastructure.Services
     /// </summary>
     public class StrategyEngine : IStrategyEngine
     {
-        // ── RSI thresholds ───────────────────────────────────────────────────
-        private const decimal RsiStrongOversold = 30m;  // strong buy zone
-        private const decimal RsiOversold = 45m;  // mild buy zone
-        private const decimal RsiOverbought = 70m;  // hard disqualifier
-
-        // ── Support proximity ─────────────────────────────────────────────────
-        /// <summary>
-        /// Price is considered "near support" if it is within this percentage
-        /// above the support level. E.g. 0.02 = within 2% above support.
-        /// </summary>
-        private const decimal SupportProximityPct = 0.02m;
-
-        // ── SL/TP multipliers ─────────────────────────────────────────────────
-        private const decimal SlAtrMultiplier = 1.5m;  // 1.5× ATR below entry
-        private const decimal TpAtrMultiplier = 3.0m;  // 3.0× ATR above entry (2:1 R/R)
-
-        // ── Confidence threshold ──────────────────────────────────────────────
-        private const int MinConfidence = 70;  // score must meet this to generate a signal
-
-        // ── Confidence point values ───────────────────────────────────────────
-        private const int PtsRsiStrongOversold = 30;
-        private const int PtsRsiMildOversold = 15;
-        private const int PtsEmaUptrend = 25;
-        private const int PtsMacdBullish = 20;
-        private const int PtsVolumeSpike = 15;
-        private const int PtsNearSupport = 10;
-
         private readonly IMarketScannerService _scanner;
         private readonly TradingBotDbContext _db;
         private readonly ILogger<StrategyEngine> _logger;
+        private readonly StrategyOptions _opts;
 
         public StrategyEngine(
             IMarketScannerService scanner,
             TradingBotDbContext db,
-            ILogger<StrategyEngine> logger)
+            ILogger<StrategyEngine> logger,
+            StrategyOptions options)
         {
             _scanner = scanner;
             _db = db;
             _logger = logger;
+            _opts = options;
         }
 
         // ════════════════════════════════════════════════════════════════════
@@ -95,6 +72,17 @@ namespace TradingBot.Infrastructure.Services
 
             string symbol = snapshot.Symbol ?? "UNKNOWN";
 
+            var customStrategies = GetActiveCustomStrategies();
+            if (customStrategies.Count > 0)
+            {
+                var customSignal = EvaluateCustomStrategies(snapshot, customStrategies);
+                if (customSignal != null)
+                {
+                    return customSignal;
+                }
+                return null;
+            }
+
             // ── Step 1: Hard disqualifiers ────────────────────────────────
             var (isDisqualified, disqualifyReason) = CheckDisqualifiers(snapshot);
             if (isDisqualified)
@@ -106,29 +94,35 @@ namespace TradingBot.Infrastructure.Services
 
             // ── Step 2: Minimum BUY requirements ─────────────────────────
             // All three core conditions must be true to even proceed.
-            bool rsiInBuyZone = snapshot.RSI < RsiOversold;
             bool emaUptrendConfirmed = snapshot.EMA20 > snapshot.EMA50;
             bool macdBullish = snapshot.MACD > 0;
-
-            if (!rsiInBuyZone || !emaUptrendConfirmed || !macdBullish)
-            {
-                _logger.LogDebug(
-                    "SKIP {Symbol} — core conditions not met: RSI={RSI:F1} (<{RsiMax}={OK1}), " +
-                    "EMA20>EMA50={OK2}, MACD>0={OK3}",
-                    symbol, snapshot.RSI, RsiOversold, rsiInBuyZone,
-                    emaUptrendConfirmed, macdBullish);
-                return null;
-            }
-
-            // ── Step 3: At least one confirmation signal ──────────────────
             bool nearSupport = IsNearSupport(snapshot.EMA20, snapshot.SupportLevel);
             bool volumeSpike = snapshot.VolumeSpike;
 
-            if (!volumeSpike && !nearSupport)
+            var mode = (_opts.StrategyMode ?? "Strict").Trim().ToLowerInvariant();
+
+            bool strictRsi = snapshot.RSI < _opts.RsiOversold;
+            bool relaxedRsi = snapshot.RSI < _opts.RelaxedRsiMax;
+            bool momentumRsi = snapshot.RSI >= _opts.MomentumRsiMin && snapshot.RSI <= _opts.MomentumRsiMax;
+
+            bool strictEntry = strictRsi && emaUptrendConfirmed && macdBullish && (volumeSpike || nearSupport);
+            bool relaxedEntry = relaxedRsi && emaUptrendConfirmed && macdBullish && (volumeSpike || nearSupport);
+            bool momentumEntry = momentumRsi && emaUptrendConfirmed && macdBullish && (!_opts.RequireVolumeSpikeForMomentum || volumeSpike);
+
+            bool allowStrict = mode == "strict" || mode == "hybrid";
+            bool allowRelaxed = mode == "relaxed";
+            bool allowMomentum = mode == "momentum" || mode == "hybrid";
+
+            bool passesEntry = (allowStrict && strictEntry)
+                               || (allowRelaxed && relaxedEntry)
+                               || (allowMomentum && momentumEntry);
+
+            if (!passesEntry)
             {
                 _logger.LogDebug(
-                    "SKIP {Symbol} — no confirmation: VolumeSpike={Spike}, NearSupport={Support}",
-                    symbol, volumeSpike, nearSupport);
+                    "SKIP {Symbol} — entry not met (Mode={Mode}): RSI={RSI:F1}, EMA20>EMA50={EMAUp}, MACD>0={MACD}, " +
+                    "VolSpike={Spike}, NearSupport={Support}",
+                    symbol, _opts.StrategyMode, snapshot.RSI, emaUptrendConfirmed, macdBullish, volumeSpike, nearSupport);
                 return null;
             }
 
@@ -141,11 +135,11 @@ namespace TradingBot.Infrastructure.Services
                 symbol, score,
                 snapshot.RSI, emaUptrendConfirmed, macdBullish, volumeSpike, nearSupport);
 
-            if (score < MinConfidence)
+            if (score < _opts.MinConfidence)
             {
                 _logger.LogDebug(
                     "SKIP {Symbol} — confidence {Score} below threshold {Min}",
-                    symbol, score, MinConfidence);
+                    symbol, score, _opts.MinConfidence);
                 return null;
             }
 
@@ -236,7 +230,7 @@ namespace TradingBot.Infrastructure.Services
         ///
         /// Returns (true, reason) if disqualified, (false, "") if clean.
         /// </summary>
-        private static (bool isDisqualified, string reason) CheckDisqualifiers(
+        private (bool isDisqualified, string reason) CheckDisqualifiers(
             IndicatorSnapshot s)
         {
             // ATR must be non-zero — without it we cannot size SL/TP.
@@ -248,8 +242,8 @@ namespace TradingBot.Infrastructure.Services
                 return (true, "EMA values not available — insufficient candle history");
 
             // RSI > 70: price is overbought, buying here risks catching the top.
-            if (s.RSI > RsiOverbought)
-                return (true, $"RSI {s.RSI:F1} is overbought (>{RsiOverbought})");
+            if (s.RSI > _opts.RsiOverbought)
+                return (true, $"RSI {s.RSI:F1} is overbought (>{_opts.RsiOverbought})");
 
             // EMA20 < EMA50: the short-term average is below the long-term average,
             // indicating a downtrend.  We only trade with the trend.
@@ -274,33 +268,33 @@ namespace TradingBot.Infrastructure.Services
         /// Only called after all hard disqualifiers have been checked, so we know
         /// the minimum conditions (RSI in zone, EMA uptrend, MACD > 0) are met.
         /// </summary>
-        private static int CalculateConfidenceScore(
+        private int CalculateConfidenceScore(
             IndicatorSnapshot s,
             bool nearSupport)
         {
             int score = 0;
 
             // RSI condition: stronger signal if deeply oversold.
-            if (s.RSI < RsiStrongOversold)
-                score += PtsRsiStrongOversold;     // 30 pts — strong oversold
+            if (s.RSI < _opts.RsiStrongOversold)
+                score += _opts.PtsRsiStrongOversold;     // 30 pts — strong oversold
             else
-                score += PtsRsiMildOversold;       // 15 pts — mild bullish zone
+                score += _opts.PtsRsiMildOversold;       // 15 pts — mild bullish zone
 
             // EMA uptrend (guaranteed true at this point, but score it anyway).
             if (s.EMA20 > s.EMA50)
-                score += PtsEmaUptrend;            // 25 pts
+                score += _opts.PtsEmaUptrend;            // 25 pts
 
             // MACD bullish momentum.
             if (s.MACD > 0m)
-                score += PtsMacdBullish;           // 20 pts
+                score += _opts.PtsMacdBullish;           // 20 pts
 
             // Volume spike: confirms institutional interest.
             if (s.VolumeSpike)
-                score += PtsVolumeSpike;           // 15 pts
+                score += _opts.PtsVolumeSpike;           // 15 pts
 
             // Buying near support: reduces downside risk.
             if (nearSupport)
-                score += PtsNearSupport;           // 10 pts
+                score += _opts.PtsNearSupport;           // 10 pts
 
             return score;
         }
@@ -313,12 +307,12 @@ namespace TradingBot.Infrastructure.Services
         ///
         /// Returns false if support is zero (not calculated / insufficient data).
         /// </summary>
-        private static bool IsNearSupport(decimal price, decimal supportLevel)
+        private bool IsNearSupport(decimal price, decimal supportLevel)
         {
             if (supportLevel <= 0m || price <= 0m)
                 return false;
 
-            decimal upperBound = supportLevel * (1m + SupportProximityPct);
+            decimal upperBound = supportLevel * (1m + _opts.SupportProximityPct);
             return price <= upperBound;
         }
 
@@ -332,11 +326,11 @@ namespace TradingBot.Infrastructure.Services
         /// Quantity and AccountBalance are left at 0 — they will be calculated by
         /// RiskManagementService.CalculatePositionSize() when the trade is opened.
         /// </summary>
-        private static TradeSignal BuildSignal(IndicatorSnapshot snapshot, int confidence)
+        private TradeSignal BuildSignal(IndicatorSnapshot snapshot, int confidence)
         {
             decimal entry = snapshot.EMA20;           // short-term price anchor
-            decimal stopLoss = entry - (snapshot.ATR * SlAtrMultiplier);
-            decimal takeProfit = entry + (snapshot.ATR * TpAtrMultiplier);
+            decimal stopLoss = entry - (snapshot.ATR * _opts.SlAtrMultiplier);
+            decimal takeProfit = entry + (snapshot.ATR * _opts.TpAtrMultiplier);
 
             // Safety: SL must always be strictly below entry.
             if (stopLoss >= entry)
@@ -357,6 +351,144 @@ namespace TradingBot.Infrastructure.Services
                 AccountBalance = 0m,   // filled at execution
                 AIConfidence = confidence,
             };
+        }
+
+        private List<Strategy> GetActiveCustomStrategies()
+        {
+            return _db.Strategies!
+                .AsNoTracking()
+                .Where(s => s.IsActive)
+                .OrderByDescending(s => s.CreatedAt)
+                .ToList();
+        }
+
+        private TradeSignal? EvaluateCustomStrategies(IndicatorSnapshot snapshot, List<Strategy> strategies)
+        {
+            var prev = _db.IndicatorSnapshots!
+                .AsNoTracking()
+                .Where(s => s.Symbol == snapshot.Symbol)
+                .OrderByDescending(s => s.Timestamp)
+                .Skip(1)
+                .FirstOrDefault();
+
+            TradeSignal? bestSignal = null;
+            decimal bestScore = 0m;
+
+            foreach (var strategy in strategies)
+            {
+                var (signal, score) = EvaluateCustomStrategy(snapshot, prev, strategy);
+                if (signal == null) continue;
+
+                var weight = GetStrategyWeight(strategy);
+                var finalScore = score * weight;
+
+                if (finalScore > bestScore)
+                {
+                    bestScore = finalScore;
+                    bestSignal = signal;
+                }
+            }
+
+            if (bestSignal != null)
+            {
+                _logger.LogInformation(
+                    "CUSTOM SIGNAL selected for {Symbol}: weightedScore={Score:F2}",
+                    snapshot.Symbol, bestScore);
+            }
+
+            return bestSignal;
+        }
+
+        private (TradeSignal? signal, decimal score) EvaluateCustomStrategy(
+            IndicatorSnapshot snapshot,
+            IndicatorSnapshot? prev,
+            Strategy strategy)
+        {
+            if (string.IsNullOrWhiteSpace(strategy.Description))
+            {
+                _logger.LogWarning("Active strategy {Id} has no definition.", strategy.ID);
+                return (null, 0m);
+            }
+
+            StrategyDefinition? def;
+            try
+            {
+                def = JsonSerializer.Deserialize<StrategyDefinition>(strategy.Description);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Active strategy {Id} has invalid JSON definition.", strategy.ID);
+                return (null, 0m);
+            }
+
+            if (def == null || def.Type != "ema_crossover")
+            {
+                _logger.LogWarning("Active strategy {Id} has unsupported type.", strategy.ID);
+                return (null, 0m);
+            }
+
+            if (def.FastEma != 20 || def.SlowEma != 50)
+            {
+                _logger.LogWarning(
+                    "Active strategy {Id} uses EMA {Fast}/{Slow}, but only EMA20/EMA50 are available.",
+                    strategy.ID, def.FastEma, def.SlowEma);
+                return (null, 0m);
+            }
+
+            if (prev == null)
+                return (null, 0m);
+
+            var crossedUp = prev.EMA20 <= prev.EMA50 && snapshot.EMA20 > snapshot.EMA50;
+            if (!crossedUp)
+                return (null, 0m);
+
+            if (def.RequireVolumeSpike && !snapshot.VolumeSpike)
+                return (null, 0m);
+
+            if (def.UseRsi)
+            {
+                if (snapshot.RSI < def.RsiMin || snapshot.RSI > def.RsiMax)
+                    return (null, 0m);
+            }
+
+            if (def.UseMacd && snapshot.MACD < def.MacdMin)
+                return (null, 0m);
+
+            if (def.UseAtr && snapshot.ATR < def.AtrMin)
+                return (null, 0m);
+
+            var confidence = CalculateCustomConfidence(snapshot, def, strategy);
+            if (confidence < def.MinConfidence)
+                return (null, 0m);
+
+            var signal = BuildSignal(snapshot, confidence);
+            _logger.LogInformation(
+                "CUSTOM SIGNAL generated for {Symbol} via {StrategyName} (ID {Id}) Conf={Conf}",
+                snapshot.Symbol, strategy.Name, strategy.ID, confidence);
+            return (signal, confidence);
+        }
+
+        private int CalculateCustomConfidence(IndicatorSnapshot snapshot, StrategyDefinition def, Strategy strategy)
+        {
+            var score = 60;
+            if (def.UseRsi) score += 10;
+            if (def.UseMacd && snapshot.MACD >= def.MacdMin) score += 10;
+            if (def.UseAtr && snapshot.ATR >= def.AtrMin) score += 5;
+            if (def.RequireVolumeSpike && snapshot.VolumeSpike) score += 10;
+
+            var minReq = strategy.MinConfidenceRequired > 0 ? (int)strategy.MinConfidenceRequired : def.MinConfidence;
+            return Math.Max(score, minReq);
+        }
+
+        private decimal GetStrategyWeight(Strategy strategy)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(strategy.Description)) return 1m;
+                var def = JsonSerializer.Deserialize<StrategyDefinition>(strategy.Description);
+                return def?.Weight > 0 ? def.Weight : 1m;
+            }
+            catch { return 1m; }
         }
     }
 }

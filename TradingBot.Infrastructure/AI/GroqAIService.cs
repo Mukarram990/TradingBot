@@ -65,8 +65,7 @@ namespace TradingBot.Infrastructure.AI
                     new { role = "user", content = userPrompt }
                 },
                 temperature = 0.2,
-                max_tokens = 512,
-                response_format = new { type = "json_object" }
+                max_tokens = 512
             });
 
             request.Content = new StringContent(body, Encoding.UTF8, "application/json");
@@ -75,7 +74,11 @@ namespace TradingBot.Infrastructure.AI
             if (response.StatusCode == HttpStatusCode.TooManyRequests)
                 throw new AiRateLimitException("Groq rate limit hit.");
 
-            response.EnsureSuccessStatusCode();
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                throw new HttpRequestException($"Groq error {(int)response.StatusCode}: {error}");
+            }
 
             var json = await response.Content.ReadAsStringAsync();
             var doc = JsonDocument.Parse(json);

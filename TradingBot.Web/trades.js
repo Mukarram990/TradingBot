@@ -13,30 +13,46 @@ const TradesModule = (() => {
      ACTIVE TRADES TABLE
   ══════════════════════════════════════ */
   async function renderActiveTrades() {
-    const tbody = document.getElementById("active-trades-body");
-    if (!tbody) return;
+    const fullBody = document.getElementById("active-trades-body");
+    const overviewBody = document.getElementById("overview-active-trades-body");
+    if (!fullBody && !overviewBody) return;
 
     const trades = await ApiClient.fetchActiveTrades();
     AppState.activeTrades = trades;
 
     if (!trades || trades.length === 0) {
-      tbody.innerHTML = `
-        <tr>
-          <td colspan="11">
-            <div class="table-empty">
-              <div class="empty-icon">📊</div>
-              <div>No active trades</div>
-            </div>
-          </td>
-        </tr>
-      `;
+      if (fullBody) {
+        fullBody.innerHTML = `
+          <tr>
+            <td colspan="10">
+              <div class="table-empty">
+                <div class="empty-icon">📊</div>
+                <div>No active trades</div>
+              </div>
+            </td>
+          </tr>
+        `;
+      }
+      if (overviewBody) {
+        overviewBody.innerHTML = `
+          <tr>
+            <td colspan="5">
+              <div class="table-empty">
+                <div class="empty-icon">📊</div>
+                <div>No active trades</div>
+              </div>
+            </td>
+          </tr>
+        `;
+      }
       updateActiveTradesCount(0);
       return;
     }
 
     updateActiveTradesCount(trades.length);
 
-    tbody.innerHTML = trades.map(t => {
+    if (fullBody) {
+      fullBody.innerHTML = trades.map(t => {
       const pnlUp  = t.pnl >= 0;
       const confCl = t.aiConfidence >= 75 ? "text-green" :
                      t.aiConfidence >= 55 ? "text-yellow" : "text-red";
@@ -75,7 +91,40 @@ const TradesModule = (() => {
           </td>
         </tr>
       `;
-    }).join("");
+      }).join("");
+    }
+
+    if (overviewBody) {
+      overviewBody.innerHTML = trades.map(t => {
+        const pnlUp  = t.pnl >= 0;
+        const confCl = t.aiConfidence >= 75 ? "text-green" :
+                       t.aiConfidence >= 55 ? "text-yellow" : "text-red";
+        const pnlPctFmt = `${pnlUp ? "+" : ""}${t.pnlPercentage.toFixed(2)}%`;
+        const pnlFmt    = `${pnlUp ? "+" : ""}$${Math.abs(t.pnl).toFixed(2)}`;
+
+        return `
+          <tr data-id="${t.id}">
+            <td>
+              <div class="td-symbol">${t.symbol}</div>
+              <div class="text-xs text-muted">${fmt.time(t.entryTime)}</div>
+            </td>
+            <td class="td-price">${fmt.price(t.entryPrice)}</td>
+            <td class="td-price current-price" data-id="${t.id}">${fmt.price(t.currentPrice)}</td>
+            <td>
+              <div class="pnl-cell">
+                <span class="${pnlUp ? "td-pnl-positive" : "td-pnl-negative"} pnl-usd" data-id="${t.id}">
+                  ${pnlFmt}
+                </span>
+                <span class="text-xs ${pnlUp ? "text-green" : "text-red"} pnl-pct" data-id="${t.id}">
+                  ${pnlPctFmt}
+                </span>
+              </div>
+            </td>
+            <td class="${confCl}">${t.aiConfidence.toFixed(1)}%</td>
+          </tr>
+        `;
+      }).join("");
+    }
   }
 
   function updateActivePnLLive() {

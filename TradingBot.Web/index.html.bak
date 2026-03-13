@@ -30,7 +30,6 @@
     .view-risk       .page-title::before { content: "🛡️ "; }
     .view-signals    .page-title::before { content: "📡 "; }
     .view-heatmap    .page-title::before { content: "🌡️ "; }
-    .view-strategybuilder .page-title::before { content: "🧪 "; }
     .view-settings   .page-title::before { content: "⚙️ "; }
 
     /* Scan line effect */
@@ -2198,11 +2197,6 @@ body::before {
         <span class="nav-label">Signals Feed</span>
       </a>
 
-      <a class="nav-item" data-view="strategybuilder" onclick="navigateTo('strategybuilder')">
-        <span class="nav-icon">🧪</span>
-        <span class="nav-label">Strategy Builder</span>
-      </a>
-
       <a class="nav-item" data-view="ai" onclick="navigateTo('ai')">
         <span class="nav-icon">🤖</span>
         <span class="nav-label">AI Verification</span>
@@ -2379,7 +2373,7 @@ body::before {
                       <th>AI %</th>
                     </tr>
                   </thead>
-                  <tbody id="overview-active-trades-body" data-table="overview">
+                  <tbody id="active-trades-body">
                     <tr><td colspan="5"><div class="table-empty"><div class="loading-dots"><span></span><span></span><span></span></div></div></td></tr>
                   </tbody>
                 </table>
@@ -2492,7 +2486,7 @@ body::before {
                 <th>Action</th>
               </tr>
             </thead>
-            <tbody id="active-trades-body" data-table="full">
+            <tbody id="active-trades-body">
               <tr><td colspan="10"><div class="table-empty"><div class="loading-dots"><span></span><span></span><span></span></div></div></td></tr>
             </tbody>
           </table>
@@ -2767,20 +2761,6 @@ body::before {
           </div>
         </div>
       </div>
-    </div>
-
-    <!-- ════════════ STRATEGY BUILDER ════════════ -->
-    <div class="main-content view-strategybuilder" data-view="strategybuilder">
-      <div class="page-header">
-        <div>
-          <div class="page-title font-ui">Strategy Builder</div>
-          <div class="page-subtitle">Create, weight, and activate custom strategies</div>
-        </div>
-        <div class="page-actions">
-          <button class="btn btn-outline btn-sm" onclick="loadStrategyBuilderView()">↻ Refresh</button>
-        </div>
-      </div>
-      <div id="strategy-builder-container"></div>
     </div>
 
     <!-- ════════════ SETTINGS ════════════ -->

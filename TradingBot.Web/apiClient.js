@@ -36,6 +36,25 @@ const ApiClient = (() => {
     return value;
   }
 
+  async function fetchJson(url, timeoutMs = 10000) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const resp = await fetch(url, { signal: controller.signal });
+      const data = await resp.json();
+      if (!resp.ok) {
+        const msg = data?.msg || `HTTP ${resp.status}`;
+        throw new Error(msg);
+      }
+      if (data && typeof data === "object" && "code" in data && data.code < 0) {
+        throw new Error(data.msg || "Binance error");
+      }
+      return data;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   async function request(endpoint, options = {}) {
     const url = `${CONFIG.API_BASE_URL}${endpoint}`;
     const controller = new AbortController();
@@ -80,29 +99,32 @@ const ApiClient = (() => {
   const del = (ep, opts = {}) => request(ep, { method: "DELETE", ...opts });
 
   async function getBinanceCandles(symbol, interval, limit = 200) {
-    try {
-      const apiCandles = await get(CONFIG.ENDPOINTS.marketCandles(symbol, interval));
-      return (apiCandles || []).map((k) => ({
-        time: Math.floor(new Date(k.openTime).getTime() / 1000),
-        open: Number(k.open),
-        high: Number(k.high),
-        low: Number(k.low),
-        close: Number(k.close),
-        volume: Number(k.volume)
-      }));
-    } catch {
-      const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-      const resp = await fetch(url);
-      const data = await resp.json();
-      return data.map((k) => ({
-        time: Math.floor(k[0] / 1000),
-        open: parseFloat(k[1]),
-        high: parseFloat(k[2]),
-        low: parseFloat(k[3]),
-        close: parseFloat(k[4]),
-        volume: parseFloat(k[5])
-      }));
+    if (CONFIG.USE_PUBLIC_MARKET_DATA) {
+      try {
+        const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+        const data = await fetchJson(url, 10000);
+        return data.map((k) => ({
+          time: Math.floor(k[0] / 1000),
+          open: parseFloat(k[1]),
+          high: parseFloat(k[2]),
+          low: parseFloat(k[3]),
+          close: parseFloat(k[4]),
+          volume: parseFloat(k[5])
+        }));
+      } catch {
+        // fall through to backend
+      }
     }
+
+    const apiCandles = await get(CONFIG.ENDPOINTS.marketCandles(symbol, interval));
+    return (apiCandles || []).map((k) => ({
+      time: Math.floor(new Date(k.openTime).getTime() / 1000),
+      open: Number(k.open),
+      high: Number(k.high),
+      low: Number(k.low),
+      close: Number(k.close),
+      volume: Number(k.volume)
+    }));
   }
 
   async function getBinanceAllTickers(symbols) {
@@ -110,7 +132,28 @@ const ApiClient = (() => {
 
     const results = {};
 
-    // Prefer one lightweight backend call over N heavy statistics calls.
+    if (CONFIG.USE_PUBLIC_MARKET_DATA) {
+      try {
+        const symbolsParam = encodeURIComponent(JSON.stringify(symbols));
+        const url = `https://api.binance.com/api/v3/ticker/24hr?symbols=${symbolsParam}`;
+        const list = await fetchJson(url, 10000);
+        if (Array.isArray(list)) {
+          list.forEach((row) => {
+            if (!row?.symbol || row.lastPrice == null) return;
+            results[row.symbol] = {
+              symbol: row.symbol,
+              lastPrice: String(row.lastPrice),
+              priceChangePercent: String(row.priceChangePercent ?? 0)
+            };
+          });
+          return results;
+        }
+      } catch {
+        // fall through to backend
+      }
+    }
+
+    // Backend path: prefer bulk prices over per-symbol statistics.
     const joined = symbols.join(",");
     const bulk = await get(`/market/prices?symbols=${encodeURIComponent(joined)}`).catch(() => null);
     if (bulk?.data?.length) {
@@ -204,7 +247,7 @@ const ApiClient = (() => {
 
   async function fetchActiveTrades() {
     const open = await get(CONFIG.ENDPOINTS.tradesActive);
-    const rows = open.trades || [];
+    const rows = open.trades || open.data || open || [];
     return rows.map((t) => {
       const currentPrice = Number(t.entryPrice || 0);
       const pnl = (currentPrice - Number(t.entryPrice || 0)) * Number(t.quantity || 0);
@@ -228,7 +271,7 @@ const ApiClient = (() => {
 
   async function fetchTradeHistory() {
     const res = await get(CONFIG.ENDPOINTS.tradesHistory);
-    const rows = res.data || [];
+    const rows = res.data || res.trades || res || [];
     return rows.map((t) => ({
       id: t.id,
       symbol: t.symbol,
@@ -247,7 +290,7 @@ const ApiClient = (() => {
 
   async function fetchOrders() {
     const res = await get(CONFIG.ENDPOINTS.orders);
-    const trades = res.data || [];
+    const trades = res.data || res.trades || res || [];
     const orders = [];
     await Promise.allSettled(trades.slice(0, 20).map(async (t) => {
       const detail = await get(CONFIG.ENDPOINTS.tradeById(t.id));
@@ -295,6 +338,30 @@ const ApiClient = (() => {
       timestamp: v.timestamp,
       reasoning: v.rawResponse || ""
     }));
+  }
+
+  async function updateStrategyMode(payload) {
+    return post(CONFIG.ENDPOINTS.strategyMode, payload);
+  }
+
+  async function fetchStrategyMode() {
+    return get(CONFIG.ENDPOINTS.strategyMode);
+  }
+
+  async function createStrategy(payload) {
+    return post(CONFIG.ENDPOINTS.strategyCustom, payload);
+  }
+
+  async function fetchStrategies() {
+    return get(CONFIG.ENDPOINTS.strategyCustom);
+  }
+
+  async function activateStrategy(id) {
+    return post(CONFIG.ENDPOINTS.strategyActivate(id), {});
+  }
+
+  async function deactivateStrategy(id) {
+    return post(CONFIG.ENDPOINTS.strategyDeactivate(id), {});
   }
 
   async function fetchRiskProfile() {
@@ -370,6 +437,7 @@ const ApiClient = (() => {
     getBinanceCandles, getBinanceTicker, getBinanceAllTickers,
     fetchSystemStatus, fetchAccount, fetchActiveTrades, fetchTradeHistory, fetchOrders,
     fetchSignals, fetchAIData, fetchRiskProfile, fetchLogs, fetchSymbols,
+    updateStrategyMode, fetchStrategyMode, createStrategy, fetchStrategies, activateStrategy, deactivateStrategy,
     closeTrade, updateRiskProfile, startBot, stopBot
   };
 })();

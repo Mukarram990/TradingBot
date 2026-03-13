@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -14,11 +15,16 @@ namespace TradingBot.Infrastructure.Binance
         private readonly HttpClient _httpClient;
         private readonly BinanceOptions _options;
         private readonly BinanceSignatureService _signatureService;
+        private readonly ILogger<BinanceAccountService> _logger;
 
-        public BinanceAccountService(HttpClient httpClient, IOptions<BinanceOptions> options)
+        public BinanceAccountService(
+            HttpClient httpClient,
+            IOptions<BinanceOptions> options,
+            ILogger<BinanceAccountService> logger)
         {
             _httpClient = httpClient;
             _options = options.Value;
+            _logger = logger;
             _httpClient.BaseAddress = new Uri(_options.BaseUrl);
 
             _signatureService = new BinanceSignatureService(_options.ApiSecret);
@@ -57,8 +63,14 @@ namespace TradingBot.Infrastructure.Binance
         }
         public async Task<decimal> GetAssetBalanceAsync(string asset)
         {
-            var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            var query = $"timestamp={timestamp}";
+            var timeResponse = await _httpClient.GetAsync("/api/v3/time");
+            timeResponse.EnsureSuccessStatusCode();
+
+            var timeJson = await timeResponse.Content.ReadAsStringAsync();
+            var timeDoc = JsonDocument.Parse(timeJson);
+            var serverTime = timeDoc.RootElement.GetProperty("serverTime").GetInt64();
+
+            var query = $"timestamp={serverTime}&recvWindow=5000";
             var signature = _signatureService.Sign(query);
 
             var request = new HttpRequestMessage(HttpMethod.Get,
@@ -67,7 +79,12 @@ namespace TradingBot.Infrastructure.Binance
             request.Headers.Add("X-MBX-APIKEY", _options.ApiKey);
 
             var response = await _httpClient.SendAsync(request);
-            response.EnsureSuccessStatusCode();
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                _logger.LogWarning("Binance account balance request failed: {Error}", error);
+                throw new Exception($"Account request failed: {error}");
+            }
 
             var json = await response.Content.ReadAsStringAsync();
             var result = JsonSerializer.Deserialize<JsonElement>(json);
@@ -90,3 +107,4 @@ namespace TradingBot.Infrastructure.Binance
     }
 
 }
+
